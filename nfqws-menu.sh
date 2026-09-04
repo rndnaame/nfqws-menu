@@ -544,6 +544,104 @@ menu_strategy() {
 }
 
 # ---------------------------------------------------------------------------
+# 3.1 Обновление IPSet List
+# ---------------------------------------------------------------------------
+IPSET_SOURCE_URL="https://raw.githubusercontent.com/Flowseal/zapret-discord-youtube/refs/heads/main/.service/ipset-service.txt"
+
+update_ipset_list() {
+  local has1=0 has2=0
+  is_installed "nfqws-keenetic"  && has1=1
+  is_installed "nfqws2-keenetic" && has2=1
+
+  if [ "$has1" -eq 0 ] && [ "$has2" -eq 0 ]; then
+    warn "Ни одна версия NFQWS не установлена."
+    ask "Перейти к установке? [Y/n]: "
+    read -r ans
+    case "$ans" in
+      n|N|н|Н) return ;;
+      *) menu_install_nfqws; return ;;
+    esac
+  fi
+
+  local ver=""
+  if [ "$has1" -eq 1 ] && [ "$has2" -eq 1 ]; then
+    echo
+    echo "Установлены обе версии. Для какой обновить ipset.list?"
+    echo "  1) nfqws-keenetic  (v1)  → /opt/etc/nfqws/ipset.list"
+    echo "  2) nfqws2-keenetic (v2)  → /opt/etc/nfqws2/lists/ipset.list"
+    echo "  a) Обе"
+    ask "Выбор [1/2/a]: "
+    read -r c
+    case "$c" in
+      1) ver=1 ;;
+      2) ver=2 ;;
+      a|A|а|А) ver=both ;;
+      *) return ;;
+    esac
+  elif [ "$has1" -eq 1 ]; then
+    ver=1
+  else
+    ver=2
+  fi
+
+  local tmp="/tmp/nfqws-ipset-$$.txt"
+  info "Скачивание IPSet с Flowseal/zapret-discord-youtube ..."
+  info "URL: $IPSET_SOURCE_URL"
+  if ! download_file "$IPSET_SOURCE_URL" "$tmp"; then
+    error "Не удалось скачать список."
+    rm -f "$tmp"
+    return 1
+  fi
+
+  # убрать пустые строки и комментарии в начале, оставить IP/CIDR
+  local cleaned="/tmp/nfqws-ipset-clean-$$.txt"
+  grep -vE '^[[:space:]]*(#|;|$)' "$tmp" | sed 's/[[:space:]]*$//' | grep -vE '^$' > "$cleaned" || true
+  local count
+  count=$(wc -l < "$cleaned" 2>/dev/null | tr -d ' ')
+  if [ -z "$count" ] || [ "$count" = "0" ]; then
+    error "Скачанный файл пуст или не содержит записей."
+    rm -f "$tmp" "$cleaned"
+    return 1
+  fi
+  info "Записей в списке: $count"
+
+  write_ipset() {
+    local dest="$1"
+    local dir
+    dir=$(dirname "$dest")
+    mkdir -p "$dir"
+    if [ -f "$dest" ]; then
+      cp -a "$dest" "${dest}.bak.$(date +%Y%m%d%H%M%S)"
+      info "Бэкап: ${dest}.bak.*"
+    fi
+    cp "$cleaned" "$dest"
+    info "Записано: $dest ($count строк)"
+  }
+
+  case "$ver" in
+    1)
+      write_ipset "/opt/etc/nfqws/ipset.list"
+      /opt/etc/init.d/S51nfqws restart 2>/dev/null || true
+      info "Сервис nfqws перезапущен."
+      ;;
+    2)
+      write_ipset "/opt/etc/nfqws2/lists/ipset.list"
+      /opt/etc/init.d/S51nfqws2 restart 2>/dev/null || true
+      info "Сервис nfqws2 перезапущен."
+      ;;
+    both)
+      write_ipset "/opt/etc/nfqws/ipset.list"
+      write_ipset "/opt/etc/nfqws2/lists/ipset.list"
+      /opt/etc/init.d/S51nfqws restart 2>/dev/null || true
+      /opt/etc/init.d/S51nfqws2 restart 2>/dev/null || true
+      info "Сервисы перезапущены."
+      ;;
+  esac
+
+  rm -f "$tmp" "$cleaned"
+}
+
+# ---------------------------------------------------------------------------
 # 4. Удаление
 # ---------------------------------------------------------------------------
 menu_remove() {
@@ -621,20 +719,22 @@ main_menu() {
     detect_arch
     show_installed
     printf '%s\n' "${BOLD}Меню:${NC}"
-    echo "  1. Установка NFQWS, NFQWS2"
-    echo "  2. Установка веб-интерфейса"
-    echo "  3. Установка стратегии"
-    echo "  4. Удаление NFQWS, NFQWS2"
+    echo "  1.  Установка NFQWS, NFQWS2"
+    echo "  2.  Установка веб-интерфейса"
+    echo "  3.  Установка стратегии"
+    echo "  3.1 Обновление IPSet List"
+    echo "  4.  Удаление NFQWS, NFQWS2"
     echo "  00. Выход"
     echo
     ask "Выберите пункт [Enter = выход]: "
     read -r choice
 
     case "$choice" in
-      1)  menu_install_nfqws ;;
-      2)  install_web ;;
-      3)  menu_strategy ;;
-      4)  menu_remove ;;
+      1)    menu_install_nfqws ;;
+      2)    install_web ;;
+      3)    menu_strategy ;;
+      3.1)  update_ipset_list ;;
+      4)    menu_remove ;;
       00|0|"")
         info "Выход."
         exit 0

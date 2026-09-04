@@ -53,10 +53,11 @@ sh -c "$(wget -qO- https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/nf
 3. Предлагает меню:
 
 ```
-1. Установка NFQWS, NFQWS2
-2. Установка веб-интерфейса
-3. Установка стратегии
-4. Удаление NFQWS, NFQWS2
+1.  Установка NFQWS, NFQWS2
+2.  Установка веб-интерфейса
+3.  Установка стратегии
+3.1 Обновление IPSet List
+4.  Удаление NFQWS, NFQWS2
 00. Выход          ← по умолчанию (Enter)
 ```
 
@@ -122,6 +123,27 @@ route | grep ^default
 `auto.list` **не трогается** — его заполняет сам демон.
 
 После всех шагов соответствующий сервис перезапускается.
+
+### 3.1 Обновление IPSet List
+
+Скачивает актуальный IP/CIDR-список из проекта  
+[Flowseal/zapret-discord-youtube](https://github.com/Flowseal/zapret-discord-youtube):
+
+```
+https://raw.githubusercontent.com/Flowseal/zapret-discord-youtube/refs/heads/main/.service/ipset-service.txt
+```
+
+и записывает его в `ipset.list` установленной версии:
+
+| Версия | Путь |
+|--------|------|
+| nfqws-keenetic (v1) | `/opt/etc/nfqws/ipset.list` |
+| nfqws2-keenetic (v2) | `/opt/etc/nfqws2/lists/ipset.list` |
+
+- Делает бэкап существующего файла
+- Убирает пустые строки и комментарии
+- Перезапускает соответствующий сервис  
+- Если установлены обе версии — можно обновить обе сразу
 
 ### 4. Удаление
 
