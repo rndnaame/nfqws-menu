@@ -758,7 +758,116 @@ update_ipset_list() {
 }
 
 # ---------------------------------------------------------------------------
-# 5. Удаление
+# 5. Ускорение DoT/DoH
+# ---------------------------------------------------------------------------
+DOT_DOH_STRATEGY='#DNS
+--filter-tcp=443,853 --filter-l7=tls
+--hostlist-domains=dot.pub,doh.pub,controld.com,opendns.com,anycast.censurfridns.dk,dns.alidns.com,libredns.gr,cloudflare-dns.com,one.one.one.one,opennameserver.org,cleanbrowsing.org,dns.adguard-dns.com,dns.comss.one,dns.nextdns.io,freedns.controld.com,dns10.quad9.net,dns.google
+--out-range=-d10
+--payload=tls_client_hello
+--lua-desync=circular:fails=2:time=60:retrans=3:nld=2
+--lua-desync=multisplit:pos=sniext+2:seqovl=3:padencap
+--lua-desync=fake:blob=fake_default_tls:optional:tcp_seq=-10000:tcp_ack=-66000:badsum:tls_mod=rnd,dupsid,sni=rzd.ru:repeat=2
+--new
+--filter-udp=853 --filter-l7=quic
+--hostlist-domains=dns.adguard-dns.com,dns.nextdns.io
+--payload=quic_initial
+--lua-desync=send:ipfrag:ipfrag_pos_udp=128'
+
+menu_dot_doh() {
+  if ! is_installed "nfqws2-keenetic"; then
+    error "Пункт доступен только при установленном nfqws2-keenetic."
+    return 1
+  fi
+
+  local conf="/opt/etc/nfqws2/nfqws2.conf"
+  if [ ! -f "$conf" ]; then
+    error "Конфиг $conf не найден."
+    return 1
+  fi
+
+  echo
+  ask "Добавить в NFQWS_ARGS_CUSTOM стратегию для ускорения DoT/DoH публичных DNS? [Y/n]: "
+  read -r ans
+  case "$ans" in
+    n|N|н|Н) info "Отменено."; return 0 ;;
+  esac
+
+  if grep -qE 'hostlist-domains=.*cloudflare-dns\.com|dot\.pub,doh\.pub' "$conf" 2>/dev/null; then
+    warn "Похоже, стратегия DoT/DoH уже присутствует в конфиге."
+    ask "Добавить повторно? [y/N]: "
+    read -r ans
+    case "$ans" in
+      y|Y|д|Д) ;;
+      *) info "Отменено."; return 0 ;;
+    esac
+  fi
+
+  cp -a "$conf" "${conf}.bak.$(date +%Y%m%d%H%M%S)"
+  info "Бэкап: ${conf}.bak.*"
+
+  local current
+  current=$(awk '
+    BEGIN { in_block=0 }
+    /^NFQWS_ARGS_CUSTOM="/ {
+      line=$0
+      sub(/^NFQWS_ARGS_CUSTOM="/, "", line)
+      if (line ~ /"$/) {
+        sub(/"$/, "", line)
+        print line
+        exit
+      }
+      print line
+      in_block=1
+      next
+    }
+    in_block {
+      if ($0 ~ /"$/) {
+        sub(/"$/, "", $0)
+        print $0
+        exit
+      }
+      print $0
+    }
+  ' "$conf")
+
+  local new_val
+  if [ -z "$(echo "$current" | tr -d '[:space:]')" ]; then
+    new_val="$DOT_DOH_STRATEGY"
+  else
+    new_val="${current}
+--new
+${DOT_DOH_STRATEGY}"
+  fi
+
+  local tmp="/tmp/nfqws2-conf-$$.tmp"
+  awk -v new_val="$new_val" '
+    BEGIN { skip=0 }
+    /^NFQWS_ARGS_CUSTOM="/ {
+      print "NFQWS_ARGS_CUSTOM=\"" new_val "\""
+      if ($0 !~ /"$/) skip=1
+      next
+    }
+    skip {
+      if ($0 ~ /"$/) skip=0
+      next
+    }
+    { print }
+  ' "$conf" > "$tmp"
+
+  if ! grep -qE '^NFQWS_ARGS_CUSTOM=' "$tmp"; then
+    printf '\nNFQWS_ARGS_CUSTOM="%s"\n' "$new_val" >> "$tmp"
+  fi
+
+  mv "$tmp" "$conf"
+  info "Стратегия DoT/DoH добавлена в NFQWS_ARGS_CUSTOM."
+
+  /opt/etc/init.d/S51nfqws2 restart 2>/dev/null || true
+  info "Сервис nfqws2 перезапущен."
+}
+
+# ---------------------------------------------------------------------------
+# 11. Удаление
 # ---------------------------------------------------------------------------
 menu_remove() {
   echo
@@ -835,22 +944,24 @@ main_menu() {
     detect_arch
     show_installed
     printf '%s\n' "${BOLD}Меню:${NC}"
-    echo "  1. Установка NFQWS, NFQWS2"
-    echo "  2. Установка веб-интерфейса"
-    echo "  3. Установка стратегии"
-    echo "  4. Обновление IPSet List"
-    echo "  5. Удаление NFQWS, NFQWS2"
+    echo "  1.  Установка NFQWS, NFQWS2"
+    echo "  2.  Установка веб-интерфейса"
+    echo "  3.  Установка стратегии"
+    echo "  4.  Обновление IPSet List"
+    echo "  5.  Ускорение DoT/DoH"
+    echo "  11. Удаление NFQWS, NFQWS2"
     echo "  00. Выход"
     echo
     ask "Выберите пункт [Enter = выход]: "
     read -r choice
 
     case "$choice" in
-      1)  menu_install_nfqws ;;
-      2)  install_web ;;
-      3)  menu_strategy ;;
-      4)  update_ipset_list ;;
-      5)  menu_remove ;;
+      1)   menu_install_nfqws ;;
+      2)   install_web ;;
+      3)   menu_strategy ;;
+      4)   update_ipset_list ;;
+      5)   menu_dot_doh ;;
+      11)  menu_remove ;;
       00|0|"")
         info "Выход."
         exit 0

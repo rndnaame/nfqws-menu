@@ -55,11 +55,12 @@ sh -c "$(wget -qO- https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/nf
 3. Предлагает меню:
 
 ```
-1. Установка NFQWS, NFQWS2
-2. Установка веб-интерфейса
-3. Установка стратегии
-4. Обновление IPSet List
-5. Удаление NFQWS, NFQWS2
+1.  Установка NFQWS, NFQWS2
+2.  Установка веб-интерфейса
+3.  Установка стратегии
+4.  Обновление IPSet List
+5.  Ускорение DoT/DoH
+11. Удаление NFQWS, NFQWS2
 00. Выход          ← по умолчанию (Enter)
 ```
 
@@ -147,7 +148,18 @@ https://raw.githubusercontent.com/Flowseal/zapret-discord-youtube/refs/heads/mai
 - Перезапускает соответствующий сервис  
 - Если установлены обе версии — можно обновить обе сразу
 
-### 5. Удаление
+### 5. Ускорение DoT/DoH
+
+Доступно при установленном **nfqws2-keenetic**.
+
+Добавляет в `NFQWS_ARGS_CUSTOM` стратегию для ускорения **DoT/DoH** публичных DNS-серверов (Cloudflare, Google, AdGuard, NextDNS, Quad9 и др.):
+
+- TLS (TCP 443/853) и QUIC (UDP 853)
+- Список доменов DNS-сервисов в `--hostlist-domains`
+- Делает бэкап конфига, дописывает стратегию (или создаёт `NFQWS_ARGS_CUSTOM`, если пустой)
+- Перезапускает `S51nfqws2`
+
+### 11. Удаление
 
 Показывает установленные компоненты и позволяет удалить выборочно или всё сразу (`opkg remove --autoremove`).
 
