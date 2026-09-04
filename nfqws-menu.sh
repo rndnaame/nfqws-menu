@@ -903,6 +903,72 @@ menu_dot_doh() {
 }
 
 # ---------------------------------------------------------------------------
+# 99. Обновить скрипт
+# ---------------------------------------------------------------------------
+resolve_script_path() {
+  # путь к запущенному скрипту (для перезаписи и перезапуска)
+  local src=""
+  if [ -n "$SCRIPT_PATH" ] && [ -f "$SCRIPT_PATH" ]; then
+    src="$SCRIPT_PATH"
+  else
+    src=$0
+    case "$src" in
+      /*) ;;
+      *) src="$(pwd)/$src" ;;
+    esac
+  fi
+  echo "$src"
+}
+
+update_self() {
+  local self url tmp
+  self=$(resolve_script_path)
+  url="${RAW_BASE}/nfqws-menu.sh"
+
+  echo
+  info "Текущий скрипт: $self"
+  info "Источник: $url"
+  ask "Скачать свежую версию и перезапустить меню? [Y/n]: "
+  read -r ans
+  case "$ans" in
+    n|N|н|Н) info "Отменено."; return 0 ;;
+  esac
+
+  tmp="/tmp/nfqws-menu-update-$$.sh"
+  if ! download_file "$url" "$tmp"; then
+    error "Не удалось скачать обновление."
+    rm -f "$tmp"
+    return 1
+  fi
+
+  # базовая проверка, что скачалось похожее на скрипт
+  if ! head -1 "$tmp" | grep -qE '^#!/(usr/)?bin/(sh|bash)'; then
+    error "Скачанный файл не похож на shell-скрипт."
+    rm -f "$tmp"
+    return 1
+  fi
+
+  # Перезапись без backup; если путь неизвестен (pipe) — /opt/bin/nfqws-menu.sh
+  if [ -f "$self" ] && [ -w "$(dirname "$self")" ]; then
+    cat "$tmp" > "$self"
+    chmod +x "$self" 2>/dev/null || true
+    rm -f "$tmp"
+    info "Скрипт обновлён: $self (без backup)"
+    info "Перезапуск меню..."
+    exec sh "$self"
+  else
+    local dest="/opt/bin/nfqws-menu.sh"
+    mkdir -p /opt/bin
+    cat "$tmp" > "$dest"
+    chmod +x "$dest"
+    rm -f "$tmp"
+    info "Скрипт сохранён: $dest"
+    info "Перезапуск меню..."
+    exec sh "$dest"
+  fi
+}
+
+# ---------------------------------------------------------------------------
 # 11. Удаление
 # ---------------------------------------------------------------------------
 menu_remove() {
@@ -986,6 +1052,7 @@ main_menu() {
     echo "  4.  Обновление IPSet List"
     echo "  5.  Ускорение DoT/DoH"
     echo "  11. Удаление NFQWS, NFQWS2"
+    echo "  99. Обновить скрипт"
     echo "  00. Выход"
     echo
     ask "Выберите пункт [Enter = выход]: "
@@ -998,6 +1065,7 @@ main_menu() {
       4)   update_ipset_list ;;
       5)   menu_dot_doh ;;
       11)  menu_remove ;;
+      99)  update_self ;;
       00|0|"")
         info "Выход."
         exit 0
@@ -1014,6 +1082,29 @@ main_menu() {
 # ---------------------------------------------------------------------------
 # Точка входа
 # ---------------------------------------------------------------------------
+# Запомнить путь к скрипту (для пункта 99)
+case "$0" in
+  /*) SCRIPT_PATH="$0" ;;
+  *)  SCRIPT_PATH="$(pwd)/$0" ;;
+esac
+# Если запущен как: sh /path/nfqws-menu.sh
+if [ ! -f "$SCRIPT_PATH" ]; then
+  for a in "$0" "$@"; do
+    case "$a" in
+      *.sh)
+        if [ -f "$a" ]; then
+          case "$a" in
+            /*) SCRIPT_PATH="$a" ;;
+            *)  SCRIPT_PATH="$(pwd)/$a" ;;
+          esac
+          break
+        fi
+        ;;
+    esac
+  done
+fi
+export SCRIPT_PATH
+
 if ! command -v opkg >/dev/null 2>&1; then
   error "opkg не найден. Скрипт предназначен для Entware (Keenetic/Netcraze)."
   exit 1
