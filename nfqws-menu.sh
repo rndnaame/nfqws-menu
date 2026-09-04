@@ -10,7 +10,7 @@
 
 set -e
 
-SCRIPT_VERSION="0.3.1"
+SCRIPT_VERSION="0.3.2"
 
 REPO_URL="https://github.com/rndnaame/nfqws-menu"
 RAW_BASE="https://raw.githubusercontent.com/rndnaame/nfqws-menu/main"
@@ -1029,6 +1029,46 @@ update_self() {
 # ---------------------------------------------------------------------------
 DPI_DETECTOR_INSTALL_URL="https://github.com/Runnin4ik/dpi-detector/releases/download/v4.0.0-rust/install.sh"
 
+# Удалить дубликаты dpi-detector (оставить только /opt/bin, если он есть)
+cleanup_dpi_detector_dupes() {
+  local primary="" f
+  if [ -x /opt/bin/dpi-detector ]; then
+    primary="/opt/bin/dpi-detector"
+  elif command -v dpi-detector >/dev/null 2>&1; then
+    primary=$(command -v dpi-detector)
+  fi
+
+  for f in /tmp/dpi-detector /opt/root/dpi-detector "$HOME/dpi-detector"; do
+    [ -n "$f" ] || continue
+    [ -f "$f" ] || continue
+    # не трогать основной файл
+    if [ -n "$primary" ] && [ "$f" = "$primary" ]; then
+      continue
+    fi
+    # если primary есть — дубликат можно удалить
+    if [ -n "$primary" ] && [ -f "$primary" ]; then
+      rm -f "$f" && info "  удалён дубликат: $f"
+    fi
+  done
+
+  # /tmp может содержать временные копии с суффиксами
+  for f in /tmp/dpi-detector* /opt/root/dpi-detector*; do
+    [ -f "$f" ] || continue
+    if [ -n "$primary" ] && [ "$f" = "$primary" ]; then
+      continue
+    fi
+    if [ -n "$primary" ] && [ -f "$primary" ]; then
+      rm -f "$f" && info "  удалён дубликат: $f"
+    fi
+  done
+
+  if [ -x /opt/bin/dpi-detector ]; then
+    info "Основной бинарник: /opt/bin/dpi-detector"
+  elif [ -n "$primary" ]; then
+    info "Основной бинарник: $primary"
+  fi
+}
+
 menu_dpi_detector() {
   echo
   info "dpi-detector (rust, ~4Mb) — Pre-release v4.0.0-rust"
@@ -1049,6 +1089,10 @@ menu_dpi_detector() {
     error "Нужны curl или wget."
     return 1
   fi
+
+  echo
+  info "Очистка дубликатов dpi-detector (/tmp, /opt/root)..."
+  cleanup_dpi_detector_dupes
   info "Установка dpi-detector завершена."
 }
 
