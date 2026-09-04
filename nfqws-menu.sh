@@ -10,7 +10,7 @@
 
 set -e
 
-SCRIPT_VERSION="0.3.6"
+SCRIPT_VERSION="0.3.7"
 
 REPO_URL="https://github.com/rndnaame/nfqws-menu"
 RAW_BASE="https://raw.githubusercontent.com/rndnaame/nfqws-menu/main"
@@ -833,9 +833,11 @@ menu_dot_doh() {
   #   NFQWS_ARGS_CUSTOM=""
   #   NFQWS_ARGS_CUSTOM="однострочный контент"
   #   NFQWS_ARGS_CUSTOM="
-  #     многострочный \
-  #     контент
+  #     многострочный
   #   "
+  #   NFQWS_ARGS_CUSTOM="--filter-tcp=443
+  #   --filter-l7=tls
+  #   ...repeats=4"
   local found=0
   local in_block=0
   local has_content=0
@@ -843,23 +845,22 @@ menu_dot_doh() {
   while IFS= read -r line || [ -n "$line" ]; do
     if [ "$in_block" -eq 0 ]; then
       case "$line" in
-        NFQWS_ARGS_CUSTOM=\")
-          # многострочный блок: открывающая кавычка на этой строке
-          found=1
-          in_block=1
-          printf '%s\n' "$line" >> "$tmp"
-          ;;
         NFQWS_ARGS_CUSTOM=\"\")
-          # пустой однострочный — заменить на многострочный с DNS
+          # пустой однострочный
           found=1
           printf 'NFQWS_ARGS_CUSTOM="\n' >> "$tmp"
           cat "$strat_tmp" >> "$tmp"
           printf '"\n' >> "$tmp"
           ;;
-        NFQWS_ARGS_CUSTOM=\"*\")
-          # однострочный с контентом: NFQWS_ARGS_CUSTOM="...content..."
+        NFQWS_ARGS_CUSTOM=\")
+          # открывающая кавычка одна на строке
           found=1
-          # снять префикс и суффикс кавычек, дописать DNS перед закрытием
+          in_block=1
+          printf '%s\n' "$line" >> "$tmp"
+          ;;
+        NFQWS_ARGS_CUSTOM=\"*\")
+          # закрыто на этой же строке: NFQWS_ARGS_CUSTOM="..."
+          found=1
           local body
           body=${line#NFQWS_ARGS_CUSTOM=\"}
           body=${body%\"}
@@ -871,16 +872,23 @@ menu_dot_doh() {
           cat "$strat_tmp" >> "$tmp"
           printf '"\n' >> "$tmp"
           ;;
+        NFQWS_ARGS_CUSTOM=\"*)
+          # открыто с контентом, кавычка НЕ закрыта на этой строке
+          # NFQWS_ARGS_CUSTOM="--filter-tcp=443
+          found=1
+          in_block=1
+          has_content=1
+          printf '%s\n' "$line" >> "$tmp"
+          ;;
         *)
           printf '%s\n' "$line" >> "$tmp"
           ;;
       esac
     else
       # внутри многострочного NFQWS_ARGS_CUSTOM
-      # закрывающая строка: только пробелы и "
+      # закрытие: строка только "  ИЛИ  строка контента, оканчивающаяся на "
       case "$line" in
         \"|[[:space:]]*\")
-          # перед закрывающей кавычкой — вставить DNS
           if [ "$has_content" -eq 1 ]; then
             printf -- '--new\n' >> "$tmp"
           fi
@@ -888,8 +896,22 @@ menu_dot_doh() {
           printf '%s\n' "$line" >> "$tmp"
           in_block=0
           ;;
+        *\")
+          # контент + закрывающая кавычка в конце строки
+          local body
+          body=${line%\"}
+          if [ -n "$(echo "$body" | tr -d '[:space:]\\')" ]; then
+            printf '%s\n' "$body" >> "$tmp"
+            has_content=1
+          fi
+          if [ "$has_content" -eq 1 ]; then
+            printf -- '--new\n' >> "$tmp"
+          fi
+          cat "$strat_tmp" >> "$tmp"
+          printf '"\n' >> "$tmp"
+          in_block=0
+          ;;
         *)
-          # обычная строка контента
           if [ -n "$(echo "$line" | tr -d '[:space:]\\')" ]; then
             has_content=1
           fi
