@@ -2,8 +2,15 @@
 # nfqws-menu.sh — интерактивное меню установки/управления
 # nfqws-keenetic / nfqws2-keenetic / nfqws-keenetic-web для Entware (Keenetic / Netcraze)
 # Репозиторий стратегий: https://github.com/rndnaame/nfqws-menu
+#
+# Версионирование (MAJOR.MINOR.PATCH):
+#   PATCH (+0.0.1) — небольшие правки
+#   MINOR (+0.1.0) — средние изменения
+#   MAJOR (+1.0.0) — критические изменения
 
 set -e
+
+SCRIPT_VERSION="0.1.3"
 
 REPO_URL="https://github.com/rndnaame/nfqws-menu"
 RAW_BASE="https://raw.githubusercontent.com/rndnaame/nfqws-menu/main"
@@ -1125,7 +1132,7 @@ main_menu() {
     clear 2>/dev/null || true
     echo
     printf '%s\n' "${BOLD}${BLUE}========================================${NC}"
-    printf '%s\n' "${BOLD}${BLUE}          NFQWS-MENU (Entware)          ${NC}"
+    printf '%s\n' "${BOLD}${BLUE}     NFQWS-MENU (Entware)  v${SCRIPT_VERSION}${NC}"
     printf '%s\n' "${BOLD}${BLUE}========================================${NC}"
     echo
     detect_arch
