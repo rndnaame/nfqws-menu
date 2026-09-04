@@ -898,6 +898,45 @@ menu_dot_doh() {
   rm -f "$strat_tmp"
   info "Стратегия DoT/DoH добавлена в NFQWS_ARGS_CUSTOM (перед закрывающей \")."
 
+  # Порт 853 (DoT) должен быть в TCP_PORTS и UDP_PORTS
+  ensure_port_in_var() {
+    local conf_file="$1"
+    local var="$2"   # TCP_PORTS или UDP_PORTS
+    local port="$3"  # 853
+    local line val new_val
+
+    line=$(grep -E "^${var}=" "$conf_file" 2>/dev/null | head -1)
+    if [ -z "$line" ]; then
+      # переменной нет — создать с нужным портом
+      printf '%s=%s\n' "$var" "$port" >> "$conf_file"
+      info "${var}: создано со значением $port"
+      return 0
+    fi
+
+    val=${line#${var}=}
+    val=$(echo "$val" | tr -d '"' | tr -d "'")
+
+    # уже есть как отдельный порт (границы: начало/конец/запятая)
+    if echo ",$val," | grep -qE ",${port},"; then
+      info "${var}: порт $port уже есть ($val)"
+      return 0
+    fi
+
+    if [ -z "$val" ]; then
+      new_val="$port"
+    else
+      new_val="${val},${port}"
+    fi
+
+    sed -i "s|^${var}=.*|${var}=${new_val}|" "$conf_file"
+    info "${var}: добавлен порт $port → ${new_val}"
+  }
+
+  echo
+  info "=== Проверка портов 853 (DoT) ==="
+  ensure_port_in_var "$conf" "TCP_PORTS" "853"
+  ensure_port_in_var "$conf" "UDP_PORTS" "853"
+
   /opt/etc/init.d/S51nfqws2 restart 2>/dev/null || true
   info "Сервис nfqws2 перезапущен."
 }
