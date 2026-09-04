@@ -1057,8 +1057,8 @@ update_self() {
   fi
 
   # Канонический путь + текущий файл + типичные места копий
-  mkdir -p /opt/bin 2>/dev/null || true
-  dest="/opt/bin/nfqws-menu.sh"
+  mkdir -p /opt/ 2>/dev/null || true
+  dest="/opt/nfqws-menu.sh"
 
   install_copy() {
     local target="$1"
