@@ -21,7 +21,7 @@
 **[Flowseal/zapret-discord-youtube](https://github.com/Flowseal/zapret-discord-youtube)**  
 и адаптированы под формат конфигов `nfqws-keenetic` / `nfqws2-keenetic`.
 
-Подготовлены пользователем **[@Nare_51](https://github.com/Nare51)** с использованием искусственного интеллекта.
+Подготовлены пользователем **[@nare_51](https://github.com/nare_51)** с использованием искусственного интеллекта.
 
 ---
 
@@ -61,7 +61,7 @@ sh -c "$(wget -qO- https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/nf
 4.  Обновление IPSet List
 5.  Обход блокировки DoT/DoH
 10. dpi-detector (rust/4Mb) (Pre-release)
-11. Удаление NFQWS, NFQWS2
+11. Удаление пакетов
 99. Обновить скрипт
 00. Выход          ← по умолчанию (Enter)
 ```
@@ -169,15 +169,25 @@ https://raw.githubusercontent.com/Flowseal/zapret-discord-youtube/refs/heads/mai
 curl -fsSL https://github.com/Runnin4ik/dpi-detector/releases/download/v4.0.0-rust/install.sh | sh
 ```
 
-### 11. Удаление
+### 11. Удаление пакетов
 
-Показывает установленные компоненты и позволяет удалить выборочно или всё сразу (`opkg remove --autoremove`).
+Показывает установленные компоненты и позволяет удалить выборочно:
 
-Дополнительно:
-- **b) Удалить резервные копии** — удаляет файлы вида:
-  - `*.bak.*` (например `nfqws2.conf.bak.20260904154045`)
-  - `*.conf-opkg`, `*.list-opkg`  
-  в каталогах `/opt/etc/nfqws/`, `/opt/etc/nfqws2/`, `/opt/etc/nfqws2/lists/`
+```
+Удаление:
+  1) nfqws2-keenetic
+  2) nfqws-keenetic-web
+  3) dpi-detector
+  a) Удалить все пакеты NFQWS
+  b) Удалить резервные копии (.bak.* / *-opkg)
+  0) Назад
+```
+
+- Пакеты NFQWS — через `opkg remove --autoremove`
+- **dpi-detector** — удаление бинарника (`/opt/bin/dpi-detector` и др.)
+- **a)** — все пакеты NFQWS + dpi-detector
+- **b)** — резервные копии `*.bak.*`, `*.conf-opkg`, `*.list-opkg`  
+  в `/opt/etc/nfqws/`, `/opt/etc/nfqws2/`, `/opt/etc/nfqws2/lists/`
 
 ### 99. Обновить скрипт
 

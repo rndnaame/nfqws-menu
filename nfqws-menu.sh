@@ -10,7 +10,7 @@
 
 set -e
 
-SCRIPT_VERSION="0.3.0"
+SCRIPT_VERSION="0.3.1"
 
 REPO_URL="https://github.com/rndnaame/nfqws-menu"
 RAW_BASE="https://raw.githubusercontent.com/rndnaame/nfqws-menu/main"
@@ -1053,7 +1053,7 @@ menu_dpi_detector() {
 }
 
 # ---------------------------------------------------------------------------
-# 11. Удаление
+# 11. Удаление пакетов
 # ---------------------------------------------------------------------------
 # Удаление резервных копий конфигов/списков (.bak.*, *-opkg)
 remove_backups() {
@@ -1094,24 +1094,55 @@ remove_backups() {
   esac
 }
 
+is_dpi_detector_installed() {
+  [ -x /opt/bin/dpi-detector ] || command -v dpi-detector >/dev/null 2>&1
+}
+
+remove_dpi_detector() {
+  local paths="/opt/bin/dpi-detector /tmp/dpi-detector"
+  local f found=0
+  # также бинарник в $HOME, если ставили туда
+  [ -n "$HOME" ] && paths="$paths $HOME/dpi-detector"
+
+  for f in $paths; do
+    if [ -f "$f" ]; then
+      rm -f "$f" && info "  удалён: $f" && found=1
+    fi
+  done
+  # копия из PATH
+  f=$(command -v dpi-detector 2>/dev/null || true)
+  if [ -n "$f" ] && [ -f "$f" ]; then
+    rm -f "$f" && info "  удалён: $f" && found=1
+  fi
+  if [ "$found" -eq 0 ]; then
+    warn "dpi-detector не найден."
+  else
+    info "dpi-detector удалён."
+  fi
+}
+
 menu_remove() {
   echo
   printf '%s\n' "${BOLD}Удаление:${NC}"
-  local items=""
-  is_installed "nfqws-keenetic"     && items="$items nfqws-keenetic"
-  is_installed "nfqws2-keenetic"    && items="$items nfqws2-keenetic"
-  is_installed "nfqws-keenetic-web" && items="$items nfqws-keenetic-web"
+
+  # Собираем список только установленных
+  local items="" types=""
+  is_installed "nfqws-keenetic"     && items="$items nfqws-keenetic"     && types="$types opkg"
+  is_installed "nfqws2-keenetic"    && items="$items nfqws2-keenetic"    && types="$types opkg"
+  is_installed "nfqws-keenetic-web" && items="$items nfqws-keenetic-web" && types="$types opkg"
+  is_dpi_detector_installed         && items="$items dpi-detector"      && types="$types bin"
 
   local i=1
+  local p
   if [ -n "$items" ]; then
     for p in $items; do
       printf "  %d) %s\n" "$i" "$p"
       i=$((i + 1))
     done
-    echo "  a) Удалить все пакеты NFQWS"
   else
-    warn "Пакеты NFQWS не установлены."
+    warn "Установленных пакетов не найдено."
   fi
+  echo "  a) Удалить все пакеты NFQWS"
   echo "  b) Удалить резервные копии (.bak.* / *-opkg)"
   echo "  0) Назад"
   ask "Что удалить? (номер / a / b / 0): "
@@ -1123,15 +1154,12 @@ menu_remove() {
       remove_backups
       ;;
     a|A|а|А)
-      if [ -z "$items" ]; then
-        warn "Нечего удалять."
-        return
-      fi
-      ask "Точно удалить все пакеты NFQWS? [y/N]: "
+      ask "Точно удалить все пакеты NFQWS (и dpi-detector, если есть)? [y/N]: "
       read -r ans
       case "$ans" in
         y|Y|д|Д)
           opkg remove --autoremove nfqws-keenetic-web nfqws2-keenetic nfqws-keenetic 2>/dev/null || true
+          remove_dpi_detector
           info "Удаление завершено."
           ;;
       esac
@@ -1146,18 +1174,22 @@ menu_remove() {
         fi
         idx=$((idx + 1))
       done
-      if [ -n "$target" ]; then
-        ask "Удалить $target? [y/N]: "
-        read -r ans
-        case "$ans" in
-          y|Y|д|Д)
+      if [ -z "$target" ]; then
+        warn "Неверный выбор"
+        return
+      fi
+      ask "Удалить $target? [y/N]: "
+      read -r ans
+      case "$ans" in
+        y|Y|д|Д)
+          if [ "$target" = "dpi-detector" ]; then
+            remove_dpi_detector
+          else
             opkg remove --autoremove "$target"
             info "$target удалён."
-            ;;
-        esac
-      else
-        warn "Неверный выбор"
-      fi
+          fi
+          ;;
+      esac
       ;;
   esac
 }
@@ -1182,7 +1214,7 @@ main_menu() {
     echo "  4.  Обновление IPSet List"
     echo "  5.  Обход блокировки DoT/DoH"
     echo "  10. dpi-detector (rust/4Mb) (Pre-release)"
-    echo "  11. Удаление NFQWS, NFQWS2"
+    echo "  11. Удаление пакетов"
     echo "  99. Обновить скрипт"
     echo "  00. Выход"
     echo
