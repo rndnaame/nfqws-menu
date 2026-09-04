@@ -21,7 +21,7 @@
 **[Flowseal/zapret-discord-youtube](https://github.com/Flowseal/zapret-discord-youtube)**  
 и адаптированы под формат конфигов `nfqws-keenetic` / `nfqws2-keenetic`.
 
-Подготовлены пользователем **[@nare_51](https://github.com/nare_51)** с использованием искусственного интеллекта.
+Подготовлены пользователем **[@Nare_51](https://github.com/Nare_51)** с использованием искусственного интеллекта.
 
 ---
 
