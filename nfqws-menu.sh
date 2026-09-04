@@ -544,7 +544,7 @@ menu_strategy() {
 }
 
 # ---------------------------------------------------------------------------
-# 3.1 Обновление IPSet List
+# 4. Обновление IPSet List
 # ---------------------------------------------------------------------------
 IPSET_SOURCE_URL="https://raw.githubusercontent.com/Flowseal/zapret-discord-youtube/refs/heads/main/.service/ipset-service.txt"
 
@@ -642,7 +642,7 @@ update_ipset_list() {
 }
 
 # ---------------------------------------------------------------------------
-# 4. Удаление
+# 5. Удаление
 # ---------------------------------------------------------------------------
 menu_remove() {
   echo
@@ -719,22 +719,22 @@ main_menu() {
     detect_arch
     show_installed
     printf '%s\n' "${BOLD}Меню:${NC}"
-    echo "  1.  Установка NFQWS, NFQWS2"
-    echo "  2.  Установка веб-интерфейса"
-    echo "  3.  Установка стратегии"
-    echo "  3.1 Обновление IPSet List"
-    echo "  4.  Удаление NFQWS, NFQWS2"
+    echo "  1. Установка NFQWS, NFQWS2"
+    echo "  2. Установка веб-интерфейса"
+    echo "  3. Установка стратегии"
+    echo "  4. Обновление IPSet List"
+    echo "  5. Удаление NFQWS, NFQWS2"
     echo "  00. Выход"
     echo
     ask "Выберите пункт [Enter = выход]: "
     read -r choice
 
     case "$choice" in
-      1)    menu_install_nfqws ;;
-      2)    install_web ;;
-      3)    menu_strategy ;;
-      3.1)  update_ipset_list ;;
-      4)    menu_remove ;;
+      1)  menu_install_nfqws ;;
+      2)  install_web ;;
+      3)  menu_strategy ;;
+      4)  update_ipset_list ;;
+      5)  menu_remove ;;
       00|0|"")
         info "Выход."
         exit 0

@@ -21,6 +21,8 @@
 **[Flowseal/zapret-discord-youtube](https://github.com/Flowseal/zapret-discord-youtube)**  
 и адаптированы под формат конфигов `nfqws-keenetic` / `nfqws2-keenetic`.
 
+Подготовлены пользователем **[@nare_51](https://github.com/nare_51)** с использованием искусственного интеллекта.
+
 ---
 
 ## Быстрый старт
@@ -53,11 +55,11 @@ sh -c "$(wget -qO- https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/nf
 3. Предлагает меню:
 
 ```
-1.  Установка NFQWS, NFQWS2
-2.  Установка веб-интерфейса
-3.  Установка стратегии
-3.1 Обновление IPSet List
-4.  Удаление NFQWS, NFQWS2
+1. Установка NFQWS, NFQWS2
+2. Установка веб-интерфейса
+3. Установка стратегии
+4. Обновление IPSet List
+5. Удаление NFQWS, NFQWS2
 00. Выход          ← по умолчанию (Enter)
 ```
 
@@ -124,7 +126,7 @@ route | grep ^default
 
 После всех шагов соответствующий сервис перезапускается.
 
-### 3.1 Обновление IPSet List
+### 4. Обновление IPSet List
 
 Скачивает актуальный IP/CIDR-список из проекта  
 [Flowseal/zapret-discord-youtube](https://github.com/Flowseal/zapret-discord-youtube):
@@ -145,7 +147,7 @@ https://raw.githubusercontent.com/Flowseal/zapret-discord-youtube/refs/heads/mai
 - Перезапускает соответствующий сервис  
 - Если установлены обе версии — можно обновить обе сразу
 
-### 4. Удаление
+### 5. Удаление
 
 Показывает установленные компоненты и позволяет удалить выборочно или всё сразу (`opkg remove --autoremove`).
 
@@ -175,7 +177,8 @@ nfqws-menu/
 3. При необходимости добавьте нужные `.bin` в `strategies/blobs/` и списки в `strategies/lists/`.
 4. Закоммитьте и запушьте — скрипт подхватит новый файл через GitHub API.
 
-Стратегии в репозитории основаны на [Flowseal/zapret-discord-youtube](https://github.com/Flowseal/zapret-discord-youtube).
+Стратегии в репозитории основаны на [Flowseal/zapret-discord-youtube](https://github.com/Flowseal/zapret-discord-youtube),  
+подготовлены [@nare_51](https://github.com/nare_51) с использованием ИИ.
 
 ---
 
@@ -228,5 +231,6 @@ route | grep ^default
 Материалы подготовлены в ознакомительных и научно-технических целях.  
 Использование на свой страх и риск. Автор не несёт ответственности за последствия.
 
-Стратегии адаптированы на основе [Flowseal/zapret-discord-youtube](https://github.com/Flowseal/zapret-discord-youtube).  
+Стратегии адаптированы на основе [Flowseal/zapret-discord-youtube](https://github.com/Flowseal/zapret-discord-youtube),  
+подготовлены [@nare_51](https://github.com/nare_51) с использованием искусственного интеллекта.  
 Официальные пакеты NFQWS: [nfqws](https://github.com/nfqws).
