@@ -793,7 +793,7 @@ menu_dot_doh() {
     n|N|н|Н) info "Отменено."; return 0 ;;
   esac
 
-  if grep -qE 'hostlist-domains=.*cloudflare-dns\.com|dot\.pub,doh\.pub' "$conf" 2>/dev/null; then
+  if grep -qE '#DNS|dot\.pub,doh\.pub' "$conf" 2>/dev/null; then
     warn "Похоже, стратегия DoT/DoH уже присутствует в конфиге."
     ask "Добавить повторно? [y/N]: "
     read -r ans
@@ -806,61 +806,97 @@ menu_dot_doh() {
   cp -a "$conf" "${conf}.bak.$(date +%Y%m%d%H%M%S)"
   info "Бэкап: ${conf}.bak.*"
 
-  local current
-  current=$(awk '
-    BEGIN { in_block=0 }
-    /^NFQWS_ARGS_CUSTOM="/ {
-      line=$0
-      sub(/^NFQWS_ARGS_CUSTOM="/, "", line)
-      if (line ~ /"$/) {
-        sub(/"$/, "", line)
-        print line
-        exit
-      }
-      print line
-      in_block=1
-      next
-    }
-    in_block {
-      if ($0 ~ /"$/) {
-        sub(/"$/, "", $0)
-        print $0
-        exit
-      }
-      print $0
-    }
-  ' "$conf")
+  local tmp="/tmp/nfqws2-conf-$$.tmp"
+  local strat_tmp="/tmp/nfqws2-dot-$$.txt"
+  # стратегия + перевод строки перед ней (и --new если в блоке уже есть контент)
+  printf '%s\n' "$DOT_DOH_STRATEGY" > "$strat_tmp"
 
-  local new_val
-  if [ -z "$(echo "$current" | tr -d '[:space:]')" ]; then
-    new_val="$DOT_DOH_STRATEGY"
-  else
-    new_val="${current}
---new
-${DOT_DOH_STRATEGY}"
+  # Вставка перед закрывающей " внутри NFQWS_ARGS_CUSTOM=" ... "
+  # Форматы:
+  #   NFQWS_ARGS_CUSTOM=""
+  #   NFQWS_ARGS_CUSTOM="однострочный контент"
+  #   NFQWS_ARGS_CUSTOM="
+  #     многострочный \
+  #     контент
+  #   "
+  local found=0
+  local in_block=0
+  local has_content=0
+
+  while IFS= read -r line || [ -n "$line" ]; do
+    if [ "$in_block" -eq 0 ]; then
+      case "$line" in
+        NFQWS_ARGS_CUSTOM=\")
+          # многострочный блок: открывающая кавычка на этой строке
+          found=1
+          in_block=1
+          printf '%s\n' "$line" >> "$tmp"
+          ;;
+        NFQWS_ARGS_CUSTOM=\"\")
+          # пустой однострочный — заменить на многострочный с DNS
+          found=1
+          printf 'NFQWS_ARGS_CUSTOM="\n' >> "$tmp"
+          cat "$strat_tmp" >> "$tmp"
+          printf '"\n' >> "$tmp"
+          ;;
+        NFQWS_ARGS_CUSTOM=\"*\")
+          # однострочный с контентом: NFQWS_ARGS_CUSTOM="...content..."
+          found=1
+          # снять префикс и суффикс кавычек, дописать DNS перед закрытием
+          local body
+          body=${line#NFQWS_ARGS_CUSTOM=\"}
+          body=${body%\"}
+          printf 'NFQWS_ARGS_CUSTOM="\n' >> "$tmp"
+          if [ -n "$(echo "$body" | tr -d '[:space:]')" ]; then
+            printf '%s\n' "$body" >> "$tmp"
+            printf -- '--new\n' >> "$tmp"
+          fi
+          cat "$strat_tmp" >> "$tmp"
+          printf '"\n' >> "$tmp"
+          ;;
+        *)
+          printf '%s\n' "$line" >> "$tmp"
+          ;;
+      esac
+    else
+      # внутри многострочного NFQWS_ARGS_CUSTOM
+      # закрывающая строка: только пробелы и "
+      case "$line" in
+        \"|[[:space:]]*\")
+          # перед закрывающей кавычкой — вставить DNS
+          if [ "$has_content" -eq 1 ]; then
+            printf -- '--new\n' >> "$tmp"
+          fi
+          cat "$strat_tmp" >> "$tmp"
+          printf '%s\n' "$line" >> "$tmp"
+          in_block=0
+          ;;
+        *)
+          # обычная строка контента
+          if [ -n "$(echo "$line" | tr -d '[:space:]\\')" ]; then
+            has_content=1
+          fi
+          printf '%s\n' "$line" >> "$tmp"
+          ;;
+      esac
+    fi
+  done < "$conf"
+
+  if [ "$found" -eq 0 ]; then
+    printf '\nNFQWS_ARGS_CUSTOM="\n' >> "$tmp"
+    cat "$strat_tmp" >> "$tmp"
+    printf '"\n' >> "$tmp"
   fi
 
-  local tmp="/tmp/nfqws2-conf-$$.tmp"
-  awk -v new_val="$new_val" '
-    BEGIN { skip=0 }
-    /^NFQWS_ARGS_CUSTOM="/ {
-      print "NFQWS_ARGS_CUSTOM=\"" new_val "\""
-      if ($0 !~ /"$/) skip=1
-      next
-    }
-    skip {
-      if ($0 ~ /"$/) skip=0
-      next
-    }
-    { print }
-  ' "$conf" > "$tmp"
-
-  if ! grep -qE '^NFQWS_ARGS_CUSTOM=' "$tmp"; then
-    printf '\nNFQWS_ARGS_CUSTOM="%s"\n' "$new_val" >> "$tmp"
+  if [ "$in_block" -eq 1 ]; then
+    error "Не найдена закрывающая кавычка NFQWS_ARGS_CUSTOM — конфиг не изменён."
+    rm -f "$tmp" "$strat_tmp"
+    return 1
   fi
 
   mv "$tmp" "$conf"
-  info "Стратегия DoT/DoH добавлена в NFQWS_ARGS_CUSTOM."
+  rm -f "$strat_tmp"
+  info "Стратегия DoT/DoH добавлена в NFQWS_ARGS_CUSTOM (перед закрывающей \")."
 
   /opt/etc/init.d/S51nfqws2 restart 2>/dev/null || true
   info "Сервис nfqws2 перезапущен."
