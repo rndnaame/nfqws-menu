@@ -758,7 +758,7 @@ update_ipset_list() {
 }
 
 # ---------------------------------------------------------------------------
-# 5. Ускорение DoT/DoH
+# 5. Обход блокировки DoT/DoH
 # ---------------------------------------------------------------------------
 DOT_DOH_STRATEGY='#DNS
 --filter-tcp=443,853 --filter-l7=tls
@@ -787,7 +787,7 @@ menu_dot_doh() {
   fi
 
   echo
-  ask "Добавить в NFQWS_ARGS_CUSTOM стратегию для ускорения DoT/DoH публичных DNS? [Y/n]: "
+  ask "Добавить в NFQWS_ARGS_CUSTOM стратегию обхода блокировки DoT/DoH публичных DNS? [Y/n]: "
   read -r ans
   case "$ans" in
     n|N|н|Н) info "Отменено."; return 0 ;;
@@ -971,32 +971,78 @@ update_self() {
 # ---------------------------------------------------------------------------
 # 11. Удаление
 # ---------------------------------------------------------------------------
+# Удаление резервных копий конфигов/списков (.bak.*, *-opkg)
+remove_backups() {
+  local dirs="/opt/etc/nfqws /opt/etc/nfqws2 /opt/etc/nfqws2/lists"
+  local f count=0
+
+  echo
+  info "Поиск резервных копий (.bak.* , *.conf-opkg , *.list-opkg)..."
+  local found=""
+  for d in $dirs; do
+    [ -d "$d" ] || continue
+    for f in "$d"/*.bak.* "$d"/*.conf-opkg "$d"/*.list-opkg; do
+      [ -f "$f" ] || continue
+      found="$found $f"
+    done
+  done
+
+  if [ -z "$found" ]; then
+    info "Резервные копии не найдены."
+    return 0
+  fi
+
+  for f in $found; do
+    echo "  $f"
+    count=$((count + 1))
+  done
+  echo
+  ask "Удалить найденные файлы ($count шт.)? [y/N]: "
+  read -r ans
+  case "$ans" in
+    y|Y|д|Д)
+      for f in $found; do
+        rm -f "$f" && info "  удалён: $f" || warn "  не удалось: $f"
+      done
+      info "Готово."
+      ;;
+    *) info "Отменено." ;;
+  esac
+}
+
 menu_remove() {
   echo
-  printf '%s\n' "${BOLD}Установленные компоненты:${NC}"
+  printf '%s\n' "${BOLD}Удаление:${NC}"
   local items=""
   is_installed "nfqws-keenetic"     && items="$items nfqws-keenetic"
   is_installed "nfqws2-keenetic"    && items="$items nfqws2-keenetic"
   is_installed "nfqws-keenetic-web" && items="$items nfqws-keenetic-web"
 
-  if [ -z "$items" ]; then
-    warn "Нечего удалять."
-    return
-  fi
-
   local i=1
-  for p in $items; do
-    printf "  %d) %s\n" "$i" "$p"
-    i=$((i + 1))
-  done
-  echo "  a) Удалить всё"
+  if [ -n "$items" ]; then
+    for p in $items; do
+      printf "  %d) %s\n" "$i" "$p"
+      i=$((i + 1))
+    done
+    echo "  a) Удалить все пакеты NFQWS"
+  else
+    warn "Пакеты NFQWS не установлены."
+  fi
+  echo "  b) Удалить резервные копии (.bak.* / *-opkg)"
   echo "  0) Назад"
-  ask "Что удалить? (номер / a / 0): "
+  ask "Что удалить? (номер / a / b / 0): "
   read -r choice
 
   case "$choice" in
     0|"") return ;;
+    b|B|б|Б)
+      remove_backups
+      ;;
     a|A|а|А)
+      if [ -z "$items" ]; then
+        warn "Нечего удалять."
+        return
+      fi
       ask "Точно удалить все пакеты NFQWS? [y/N]: "
       read -r ans
       case "$ans" in
@@ -1050,7 +1096,7 @@ main_menu() {
     echo "  2.  Установка веб-интерфейса"
     echo "  3.  Установка стратегии"
     echo "  4.  Обновление IPSet List"
-    echo "  5.  Ускорение DoT/DoH"
+    echo "  5.  Обход блокировки DoT/DoH"
     echo "  11. Удаление NFQWS, NFQWS2"
     echo "  99. Обновить скрипт"
     echo "  00. Выход"

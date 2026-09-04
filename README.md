@@ -59,8 +59,9 @@ sh -c "$(wget -qO- https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/nf
 2.  Установка веб-интерфейса
 3.  Установка стратегии
 4.  Обновление IPSet List
-5.  Ускорение DoT/DoH
+5.  Обход блокировки DoT/DoH
 11. Удаление NFQWS, NFQWS2
+99. Обновить скрипт
 00. Выход          ← по умолчанию (Enter)
 ```
 
@@ -148,11 +149,11 @@ https://raw.githubusercontent.com/Flowseal/zapret-discord-youtube/refs/heads/mai
 - Перезапускает соответствующий сервис  
 - Если установлены обе версии — можно обновить обе сразу
 
-### 5. Ускорение DoT/DoH
+### 5. Обход блокировки DoT/DoH
 
 Доступно при установленном **nfqws2-keenetic**.
 
-Добавляет в `NFQWS_ARGS_CUSTOM` стратегию для ускорения **DoT/DoH** публичных DNS-серверов (Cloudflare, Google, AdGuard, NextDNS, Quad9 и др.):
+Добавляет в `NFQWS_ARGS_CUSTOM` стратегию обхода блокировки **DoT/DoH** публичных DNS-серверов (Cloudflare, Google, AdGuard, NextDNS, Quad9 и др.):
 
 - TLS (TCP 443/853) и QUIC (UDP 853)
 - Список доменов DNS-сервисов в `--hostlist-domains`
@@ -162,6 +163,24 @@ https://raw.githubusercontent.com/Flowseal/zapret-discord-youtube/refs/heads/mai
 ### 11. Удаление
 
 Показывает установленные компоненты и позволяет удалить выборочно или всё сразу (`opkg remove --autoremove`).
+
+Дополнительно:
+- **b) Удалить резервные копии** — удаляет файлы вида:
+  - `*.bak.*` (например `nfqws2.conf.bak.20260904154045`)
+  - `*.conf-opkg`, `*.list-opkg`  
+  в каталогах `/opt/etc/nfqws/`, `/opt/etc/nfqws2/`, `/opt/etc/nfqws2/lists/`
+
+### 99. Обновить скрипт
+
+Скачивает свежую версию `nfqws-menu.sh` из репозитория:
+
+```
+https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/nfqws-menu.sh
+```
+
+- Перезаписывает текущий файл **без backup**
+- Сразу перезапускает меню (`exec`)
+- Если скрипт был запущен через pipe (`sh -c "$(wget …)"`) — сохраняет в `/opt/bin/nfqws-menu.sh`
 
 ---
 
