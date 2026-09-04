@@ -293,48 +293,74 @@ fix_isp_interface() {
   info "ISP_INTERFACE=\"$detected\" записан в $conf"
 }
 
-# Проверка необходимых blobs
+# Извлечь пути к blob-файлам из конфига
+# Учитывает:
+#   --blob=name:@/path/to/file.bin
+#   --dpi-desync-fake-tls=/path/file.bin
+#   --dpi-desync-fake-quic=/path/file.bin
+#   любые абсолютные пути *.bin в значении переменных
+extract_blob_paths() {
+  local conf="$1"
+  # убрать комментарии, развернуть в одну строку-поток, вытащить пути
+  grep -vE '^[[:space:]]*#' "$conf" 2>/dev/null | \
+  tr ' \t' '\n' | \
+  sed -n \
+    -e 's/.*@\(\/[^[:space:]"]*\.bin\).*/\1/p' \
+    -e 's/.*=\(\/[^[:space:]"]*\.bin\).*/\1/p' | \
+  sort -u
+}
+
+# Проверка blobs, реально используемых в конфиге
 check_blobs() {
   local ver="$1"
+  local conf="$2"
   local missing=0
-  local f
+  local paths path name
+  local missing_list=""
 
-  if [ "$ver" = "1" ]; then
-    # nfqws v1: blobs обычно рядом с конфигом
-    for f in \
-      /opt/etc/nfqws/tls_clienthello.bin \
-      /opt/etc/nfqws/quic_initial.bin
-    do
-      if [ -f "$f" ]; then
-        info "blob OK: $f"
-      else
-        warn "blob отсутствует: $f"
-        missing=1
-      fi
-    done
-  else
-    for f in \
-      /opt/etc/nfqws2/blobs/tls_clienthello.bin \
-      /opt/etc/nfqws2/blobs/quic_initial.bin
-    do
-      if [ -f "$f" ]; then
-        info "blob OK: $f"
-      else
-        warn "blob отсутствует: $f"
-        missing=1
-      fi
-    done
+  if [ ! -f "$conf" ]; then
+    warn "Конфиг $conf не найден — проверка blobs пропущена."
+    return 1
   fi
 
-  if [ "$missing" -eq 1 ]; then
-    warn "Часть blobs отсутствует. Стратегии с fake-пакетами могут не работать."
-    ask "Скачать blobs из репозитория strategies/blobs/? [Y/n]: "
-    read -r ans
-    case "$ans" in
-      n|N|н|Н) return 0 ;;
-    esac
-    download_blobs "$ver"
+  paths=$(extract_blob_paths "$conf")
+  if [ -z "$paths" ]; then
+    info "В конфиге нет ссылок на .bin blobs — проверка не требуется."
+    return 0
   fi
+
+  info "Blobs, указанные в конфиге:"
+  for path in $paths; do
+    if [ -f "$path" ]; then
+      info "  OK  $path"
+    else
+      warn "  нет $path"
+      missing=1
+      missing_list="$missing_list $path"
+    fi
+  done
+
+  if [ "$missing" -eq 0 ]; then
+    info "Все используемые blobs на месте."
+    return 0
+  fi
+
+  warn "Часть blobs отсутствует. Стратегии с fake-пакетами могут не работать."
+  ask "Скачать отсутствующие blobs из strategies/blobs/? [Y/n]: "
+  read -r ans
+  case "$ans" in
+    n|N|н|Н) return 0 ;;
+  esac
+
+  for path in $missing_list; do
+    name=$(basename "$path")
+    info "Скачивание $name → $path"
+    if download_file "${RAW_BASE}/strategies/blobs/${name}" "$path"; then
+      info "  готово"
+    else
+      warn "  не удалось скачать $name (нет в репозитории?)"
+    fi
+  done
 }
 
 download_file() {
@@ -346,26 +372,6 @@ download_file() {
   else
     wget -qO "$dest" "$url"
   fi
-}
-
-download_blobs() {
-  local ver="$1"
-  local base="${RAW_BASE}/strategies/blobs"
-  local dest_dir
-  if [ "$ver" = "1" ]; then
-    dest_dir="/opt/etc/nfqws"
-  else
-    dest_dir="/opt/etc/nfqws2/blobs"
-  fi
-  mkdir -p "$dest_dir"
-  for name in tls_clienthello.bin quic_initial.bin; do
-    info "Скачивание $name ..."
-    if download_file "${base}/${name}" "${dest_dir}/${name}"; then
-      info "  → ${dest_dir}/${name}"
-    else
-      warn "  не удалось скачать $name (файл может отсутствовать в репозитории)"
-    fi
-  done
 }
 
 # Обновление lists из репозитория
@@ -440,7 +446,7 @@ apply_strategy() {
 
   echo
   info "=== Проверка blobs ==="
-  check_blobs "$ver"
+  check_blobs "$ver" "$conf_dest"
 
   echo
   ask "Обновить lists (user/exclude/ipset) из репозитория? [y/N]: "
