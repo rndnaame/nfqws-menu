@@ -10,7 +10,7 @@
 
 set -e
 
-SCRIPT_VERSION="0.3.4"
+SCRIPT_VERSION="0.3.5"
 
 REPO_URL="https://github.com/rndnaame/nfqws-menu"
 RAW_BASE="https://raw.githubusercontent.com/rndnaame/nfqws-menu/main"
@@ -1140,17 +1140,10 @@ menu_dpi_detector() {
   echo
   info "dpi-detector (rust, ~4Mb) — Pre-release v4.0.0-rust"
 
-  # Уже установлен — сразу запуск
+  # Уже установлен — сразу запуск без вопросов
   if [ -x /opt/bin/dpi-detector ]; then
     info "Основной бинарник на месте: /opt/bin/dpi-detector"
-    info "Очистка дубликатов..."
     cleanup_dpi_detector_dupes
-    echo
-    ask "Запустить dpi-detector? [Y/n]: "
-    read -r ans
-    case "$ans" in
-      n|N|н|Н) info "Отменено."; return 0 ;;
-    esac
     info "Запуск /opt/bin/dpi-detector ..."
     if [ -c /dev/tty ]; then
       /opt/bin/dpi-detector </dev/tty
