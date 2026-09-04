@@ -10,7 +10,7 @@
 
 set -e
 
-SCRIPT_VERSION="0.3.5"
+SCRIPT_VERSION="0.3.6"
 
 REPO_URL="https://github.com/rndnaame/nfqws-menu"
 RAW_BASE="https://raw.githubusercontent.com/rndnaame/nfqws-menu/main"
@@ -1094,7 +1094,7 @@ update_self() {
 # ---------------------------------------------------------------------------
 # 10. dpi-detector (rust/4Mb) Pre-release
 # ---------------------------------------------------------------------------
-DPI_DETECTOR_INSTALL_URL="https://github.com/Runnin4ik/dpi-detector/releases/download/v4.0.0-rust/install.sh"
+DPI_DETECTOR_INSTALL_URL="https://raw.githubusercontent.com/Runnin4ik/dpi-detector/rust/install.sh"
 
 # Удалить дубликаты dpi-detector (оставить только /opt/bin, если он есть)
 cleanup_dpi_detector_dupes() {
