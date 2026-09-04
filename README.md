@@ -60,6 +60,7 @@ sh -c "$(wget -qO- https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/nf
 3.  Установка стратегии
 4.  Обновление IPSet List
 5.  Обход блокировки DoT/DoH
+10. dpi-detector (rust/4Mb) (Pre-release)
 11. Удаление NFQWS, NFQWS2
 99. Обновить скрипт
 00. Выход          ← по умолчанию (Enter)
@@ -159,6 +160,14 @@ https://raw.githubusercontent.com/Flowseal/zapret-discord-youtube/refs/heads/mai
 - Список доменов DNS-сервисов в `--hostlist-domains`
 - Делает бэкап конфига, дописывает стратегию (или создаёт `NFQWS_ARGS_CUSTOM`, если пустой)
 - Перезапускает `S51nfqws2`
+
+### 10. dpi-detector (rust/4Mb) (Pre-release)
+
+Устанавливает [dpi-detector](https://github.com/Runnin4ik/dpi-detector) (сборка rust, ~4Mb, pre-release v4.0.0-rust):
+
+```bash
+curl -fsSL https://github.com/Runnin4ik/dpi-detector/releases/download/v4.0.0-rust/install.sh | sh
+```
 
 ### 11. Удаление
 

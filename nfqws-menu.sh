@@ -10,7 +10,7 @@
 
 set -e
 
-SCRIPT_VERSION="0.2.0"
+SCRIPT_VERSION="0.3.0"
 
 REPO_URL="https://github.com/rndnaame/nfqws-menu"
 RAW_BASE="https://raw.githubusercontent.com/rndnaame/nfqws-menu/main"
@@ -1025,6 +1025,34 @@ update_self() {
 }
 
 # ---------------------------------------------------------------------------
+# 10. dpi-detector (rust/4Mb) Pre-release
+# ---------------------------------------------------------------------------
+DPI_DETECTOR_INSTALL_URL="https://github.com/Runnin4ik/dpi-detector/releases/download/v4.0.0-rust/install.sh"
+
+menu_dpi_detector() {
+  echo
+  info "dpi-detector (rust, ~4Mb) — Pre-release v4.0.0-rust"
+  info "Источник: $DPI_DETECTOR_INSTALL_URL"
+  echo
+  ask "Установить dpi-detector? [Y/n]: "
+  read -r ans
+  case "$ans" in
+    n|N|н|Н) info "Отменено."; return 0 ;;
+  esac
+
+  info "Запуск установщика..."
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL "$DPI_DETECTOR_INSTALL_URL" | sh
+  elif command -v wget >/dev/null 2>&1; then
+    wget -qO- "$DPI_DETECTOR_INSTALL_URL" | sh
+  else
+    error "Нужны curl или wget."
+    return 1
+  fi
+  info "Установка dpi-detector завершена."
+}
+
+# ---------------------------------------------------------------------------
 # 11. Удаление
 # ---------------------------------------------------------------------------
 # Удаление резервных копий конфигов/списков (.bak.*, *-opkg)
@@ -1153,6 +1181,7 @@ main_menu() {
     echo "  3.  Установка стратегии"
     echo "  4.  Обновление IPSet List"
     echo "  5.  Обход блокировки DoT/DoH"
+    echo "  10. dpi-detector (rust/4Mb) (Pre-release)"
     echo "  11. Удаление NFQWS, NFQWS2"
     echo "  99. Обновить скрипт"
     echo "  00. Выход"
@@ -1166,6 +1195,7 @@ main_menu() {
       3)   menu_strategy ;;
       4)   update_ipset_list ;;
       5)   menu_dot_doh ;;
+      10)  menu_dpi_detector ;;
       11)  menu_remove ;;
       99)  update_self ;;
       00|0|"")
