@@ -10,7 +10,7 @@
 
 set -e
 
-SCRIPT_VERSION="0.1.3"
+SCRIPT_VERSION="0.2.0"
 
 REPO_URL="https://github.com/rndnaame/nfqws-menu"
 RAW_BASE="https://raw.githubusercontent.com/rndnaame/nfqws-menu/main"
@@ -489,10 +489,18 @@ apply_strategy() {
 
   if [ "$ver" = "1" ]; then
     conf_dest="/opt/etc/nfqws/nfqws.conf"
-    conf_path="${RAW_BASE}/strategies/nfqws1/${conf_name}"
+    if [ "$conf_name" = "default" ]; then
+      conf_path="https://raw.githubusercontent.com/nfqws/nfqws-keenetic/master/etc/nfqws/nfqws.conf"
+    else
+      conf_path="${RAW_BASE}/strategies/nfqws1/${conf_name}"
+    fi
   else
     conf_dest="/opt/etc/nfqws2/nfqws2.conf"
-    conf_path="${RAW_BASE}/strategies/nfqws2/${conf_name}"
+    if [ "$conf_name" = "default" ]; then
+      conf_path="https://raw.githubusercontent.com/nfqws/nfqws2-keenetic/master/etc/nfqws2/nfqws2.conf"
+    else
+      conf_path="${RAW_BASE}/strategies/nfqws2/${conf_name}"
+    fi
   fi
 
   if [ ! -f "$conf_dest" ]; then
@@ -501,6 +509,7 @@ apply_strategy() {
   fi
 
   info "Скачивание стратегии: $conf_name"
+  info "URL: $conf_path"
   local tmp="/tmp/nfqws-strategy-$$.conf"
   if command -v curl >/dev/null 2>&1; then
     curl -fsSL "$conf_path" -o "$tmp" || { error "Не удалось скачать $conf_path"; return 1; }
@@ -620,21 +629,22 @@ menu_strategy() {
   info "Доступные стратегии ($dir):"
   local list
   list=$(list_strategies "$dir")
-  if [ -z "$list" ]; then
-    warn "Список стратегий пуст или недоступен (проверьте интернет / репозиторий)."
-    warn "Ожидаемые файлы: $REPO_URL/tree/main/strategies/$dir"
-    return
-  fi
 
+  # Пункт 1 всегда — default (стандартный конфиг из официального репозитория)
   local i=1
-  local files=""
-  local f base mark
+  local files="default"
+  if [ -z "$current_id" ]; then
+    printf "  %s%2d) default  (стандартная из репозитория nfqws)  <-- текущая?%s\n" "$GREEN$BOLD" "$i" "$NC"
+  else
+    printf "  %2d) default  (стандартная из репозитория nfqws)\n" "$i"
+  fi
+  i=2
+
+  local f base
   # shellcheck disable=SC2086
   for f in $list; do
     base=$(echo "$f" | sed 's/\.conf$//' | tr '[:upper:]' '[:lower:]')
-    mark=""
     if [ -n "$current_id" ] && [ "$base" = "$current_id" ]; then
-      # подсветка текущей: зелёный + метка
       printf "  %s%2d) %s  <-- текущая%s\n" "$GREEN$BOLD" "$i" "$f" "$NC"
     else
       printf "  %2d) %s\n" "$i" "$f"
