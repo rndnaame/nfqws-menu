@@ -9,23 +9,25 @@ REPO_URL="https://github.com/rndnaame/nfqws-menu"
 RAW_BASE="https://raw.githubusercontent.com/rndnaame/nfqws-menu/main"
 STRATEGIES_API="https://api.github.com/repos/rndnaame/nfqws-menu/contents/strategies"
 
-# Цвета (если терминал поддерживает)
+# Цвета через printf (работает в busybox ash / Entware)
+# Переменные содержат реальный ESC-символ, а не строку \033
 if [ -t 1 ]; then
-  RED='\033[0;31m'
-  GREEN='\033[0;32m'
-  YELLOW='\033[1;33m'
-  BLUE='\033[0;34m'
-  CYAN='\033[0;36m'
-  NC='\033[0m'
-  BOLD='\033[1m'
+  ESC=$(printf '\033')
+  RED="${ESC}[0;31m"
+  GREEN="${ESC}[0;32m"
+  YELLOW="${ESC}[1;33m"
+  BLUE="${ESC}[0;34m"
+  CYAN="${ESC}[0;36m"
+  NC="${ESC}[0m"
+  BOLD="${ESC}[1m"
 else
   RED= GREEN= YELLOW= BLUE= CYAN= NC= BOLD=
 fi
 
-info()  { printf "${GREEN}[+]${NC} %s\n" "$*"; }
-warn()  { printf "${YELLOW}[!]${NC} %s\n" "$*"; }
-error() { printf "${RED}[✗]${NC} %s\n" "$*"; }
-ask()   { printf "${CYAN}[?]${NC} %s" "$*"; }
+info()  { printf '%s\n' "${GREEN}[+]${NC} $*"; }
+warn()  { printf '%s\n' "${YELLOW}[!]${NC} $*"; }
+error() { printf '%s\n' "${RED}[x]${NC} $*"; }
+ask()   { printf '%s' "${CYAN}[?]${NC} $*"; }
 
 # ---------------------------------------------------------------------------
 # Определение архитектуры
@@ -83,15 +85,15 @@ print_pkg_info() {
     local ver status
     ver=$(pkg_version "$name")
     status=$(service_status "$init")
-    printf "  ${GREEN}%-22s${NC} версия: %-12s статус: %s\n" "$name" "$ver" "$status"
+    printf '  %s%-22s%s версия: %-12s статус: %s\n' "$GREEN" "$name" "$NC" "$ver" "$status"
   else
-    printf "  ${YELLOW}%-22s${NC} не установлен\n" "$name"
+    printf '  %s%-22s%s не установлен\n' "$YELLOW" "$name" "$NC"
   fi
 }
 
 show_installed() {
   echo
-  echo "${BOLD}Установленные компоненты:${NC}"
+  printf '%s\n' "${BOLD}Установленные компоненты:${NC}"
   print_pkg_info "nfqws-keenetic"     "S51nfqws"
   print_pkg_info "nfqws2-keenetic"    "S51nfqws2"
   print_pkg_info "nfqws-keenetic-web" ""
@@ -153,7 +155,7 @@ ask_web_install() {
 
 menu_install_nfqws() {
   echo
-  echo "${BOLD}Выберите версию для установки:${NC}"
+  printf '%s\n' "${BOLD}Выберите версию для установки:${NC}"
   echo "  1) nfqws-keenetic  (версия 1)"
   echo "  2) nfqws2-keenetic (версия 2)"
   echo "  0) Назад"
@@ -331,7 +333,7 @@ menu_strategy() {
 # ---------------------------------------------------------------------------
 menu_remove() {
   echo
-  echo "${BOLD}Установленные компоненты:${NC}"
+  printf '%s\n' "${BOLD}Установленные компоненты:${NC}"
   local items=""
   is_installed "nfqws-keenetic"     && items="$items nfqws-keenetic"
   is_installed "nfqws2-keenetic"    && items="$items nfqws2-keenetic"
@@ -397,13 +399,13 @@ main_menu() {
   while true; do
     clear 2>/dev/null || true
     echo
-    echo "${BOLD}${BLUE}════════════════════════════════════════${NC}"
-    echo "${BOLD}${BLUE}          NFQWS-MENU (Entware)          ${NC}"
-    echo "${BOLD}${BLUE}════════════════════════════════════════${NC}"
+    printf '%s\n' "${BOLD}${BLUE}========================================${NC}"
+    printf '%s\n' "${BOLD}${BLUE}          NFQWS-MENU (Entware)          ${NC}"
+    printf '%s\n' "${BOLD}${BLUE}========================================${NC}"
     echo
     detect_arch
     show_installed
-    echo "${BOLD}Меню:${NC}"
+    printf '%s\n' "${BOLD}Меню:${NC}"
     echo "  1. Установка NFQWS, NFQWS2"
     echo "  2. Установка веб-интерфейса"
     echo "  3. Установка стратегии"
@@ -418,7 +420,7 @@ main_menu() {
       2)  install_web ;;
       3)  menu_strategy ;;
       4)  menu_remove ;;
-      00|0|"") 
+      00|0|"")
         info "Выход."
         exit 0
         ;;
