@@ -59,32 +59,77 @@ pkg_version() {
   opkg info "$1" 2>/dev/null | awk -F': ' '/^Version:/{print $2; exit}'
 }
 
+# Проверка, слушает ли кто-то порт (для веб-интерфейса :90)
+port_is_open() {
+  local port="$1"
+  # netstat (busybox) или ss
+  if command -v netstat >/dev/null 2>&1; then
+    netstat -lnt 2>/dev/null | grep -qE "[.:]${port}[[:space:]]"
+    return $?
+  fi
+  if command -v ss >/dev/null 2>&1; then
+    ss -lnt 2>/dev/null | grep -qE "[.:]${port}[[:space:]]"
+    return $?
+  fi
+  # fallback: попытка подключиться к localhost
+  if command -v nc >/dev/null 2>&1; then
+    nc -z 127.0.0.1 "$port" >/dev/null 2>&1
+    return $?
+  fi
+  return 1
+}
+
 service_status() {
-  # $1 = init script name (без пути)
-  local init="/opt/etc/init.d/$1"
-  if [ ! -x "$init" ]; then
-    echo "нет init-скрипта"
-    return
-  fi
-  if $init status 2>/dev/null | grep -qiE 'running|started|is running'; then
-    echo "запущен"
-  else
-    # fallback: проверка процесса
-    case "$1" in
-      S51nfqws)  pgrep -f '/opt/usr/bin/nfqws ' >/dev/null 2>&1 && echo "запущен" || echo "остановлен" ;;
-      S51nfqws2) pgrep -f '/opt/usr/bin/nfqws2' >/dev/null 2>&1 && echo "запущен" || echo "остановлен" ;;
-      *)         echo "остановлен" ;;
-    esac
-  fi
+  # $1 = тип: nfqws | nfqws2 | web
+  case "$1" in
+    nfqws)
+      if [ -x /opt/etc/init.d/S51nfqws ] && /opt/etc/init.d/S51nfqws status 2>/dev/null | grep -qiE 'running|started|is running'; then
+        echo "запущен"
+      elif pgrep -f '/opt/usr/bin/nfqws ' >/dev/null 2>&1; then
+        echo "запущен"
+      else
+        echo "остановлен"
+      fi
+      ;;
+    nfqws2)
+      if [ -x /opt/etc/init.d/S51nfqws2 ] && /opt/etc/init.d/S51nfqws2 status 2>/dev/null | grep -qiE 'running|started|is running'; then
+        echo "запущен"
+      elif pgrep -f '/opt/usr/bin/nfqws2' >/dev/null 2>&1; then
+        echo "запущен"
+      else
+        echo "остановлен"
+      fi
+      ;;
+    web)
+      # nfqws-keenetic-web = lighttpd на порту 90
+      if port_is_open 90; then
+        echo "запущен (:90)"
+      elif pgrep -f 'lighttpd.*nfqws|nfqws.*lighttpd|/opt/etc/lighttpd' >/dev/null 2>&1; then
+        echo "запущен"
+      elif [ -x /opt/etc/init.d/S80lighttpd ] && /opt/etc/init.d/S80lighttpd status 2>/dev/null | grep -qiE 'running|started'; then
+        # если lighttpd общий — всё равно проверяем порт
+        if port_is_open 90; then
+          echo "запущен (:90)"
+        else
+          echo "остановлен"
+        fi
+      else
+        echo "остановлен"
+      fi
+      ;;
+    *)
+      echo "неизвестно"
+      ;;
+  esac
 }
 
 print_pkg_info() {
   local name="$1"
-  local init="$2"
+  local kind="$2"
   if is_installed "$name"; then
     local ver status
     ver=$(pkg_version "$name")
-    status=$(service_status "$init")
+    status=$(service_status "$kind")
     printf '  %s%-22s%s версия: %-12s статус: %s\n' "$GREEN" "$name" "$NC" "$ver" "$status"
   else
     printf '  %s%-22s%s не установлен\n' "$YELLOW" "$name" "$NC"
@@ -94,9 +139,9 @@ print_pkg_info() {
 show_installed() {
   echo
   printf '%s\n' "${BOLD}Установленные компоненты:${NC}"
-  print_pkg_info "nfqws-keenetic"     "S51nfqws"
-  print_pkg_info "nfqws2-keenetic"    "S51nfqws2"
-  print_pkg_info "nfqws-keenetic-web" ""
+  print_pkg_info "nfqws-keenetic"     "nfqws"
+  print_pkg_info "nfqws2-keenetic"    "nfqws2"
+  print_pkg_info "nfqws-keenetic-web" "web"
   echo
 }
 
@@ -199,6 +244,154 @@ list_strategies() {
   fi
 }
 
+# Определить интерфейс провайдера из default route
+detect_isp_interface() {
+  local iface=""
+  # ip route (предпочтительно)
+  if command -v ip >/dev/null 2>&1; then
+    iface=$(ip route 2>/dev/null | awk '/^default/ {for(i=1;i<=NF;i++) if($i=="dev"){print $(i+1); exit}}')
+  fi
+  # fallback: route
+  if [ -z "$iface" ]; then
+    iface=$(route -n 2>/dev/null | awk '/^0\.0\.0\.0/ {print $8; exit}')
+  fi
+  if [ -z "$iface" ]; then
+    iface=$(route 2>/dev/null | awk '/^default/ {print $NF; exit}')
+  fi
+  echo "$iface"
+}
+
+# Установить ISP_INTERFACE в конфиге
+fix_isp_interface() {
+  local conf="$1"
+  local detected current
+  detected=$(detect_isp_interface)
+  if [ -z "$detected" ]; then
+    warn "Не удалось определить интерфейс провайдера (route/ip route)."
+    return 1
+  fi
+  current=$(grep -E '^ISP_INTERFACE=' "$conf" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"')
+  info "Интерфейс провайдера (default route): $detected"
+  if [ -n "$current" ]; then
+    info "В конфиге сейчас: ISP_INTERFACE=\"$current\""
+  fi
+  if [ "$current" = "$detected" ]; then
+    info "ISP_INTERFACE уже совпадает с интерфейсом провайдера."
+    return 0
+  fi
+  ask "Установить ISP_INTERFACE=\"$detected\"? [Y/n]: "
+  read -r ans
+  case "$ans" in
+    n|N|н|Н) warn "ISP_INTERFACE не изменён."; return 0 ;;
+  esac
+  if grep -qE '^ISP_INTERFACE=' "$conf" 2>/dev/null; then
+    sed -i "s|^ISP_INTERFACE=.*|ISP_INTERFACE=\"$detected\"|" "$conf"
+  else
+    # вставить в начало после возможных комментариев
+    printf 'ISP_INTERFACE="%s"\n' "$detected" | cat - "$conf" > "${conf}.new" && mv "${conf}.new" "$conf"
+  fi
+  info "ISP_INTERFACE=\"$detected\" записан в $conf"
+}
+
+# Проверка необходимых blobs
+check_blobs() {
+  local ver="$1"
+  local missing=0
+  local f
+
+  if [ "$ver" = "1" ]; then
+    # nfqws v1: blobs обычно рядом с конфигом
+    for f in \
+      /opt/etc/nfqws/tls_clienthello.bin \
+      /opt/etc/nfqws/quic_initial.bin
+    do
+      if [ -f "$f" ]; then
+        info "blob OK: $f"
+      else
+        warn "blob отсутствует: $f"
+        missing=1
+      fi
+    done
+  else
+    for f in \
+      /opt/etc/nfqws2/blobs/tls_clienthello.bin \
+      /opt/etc/nfqws2/blobs/quic_initial.bin
+    do
+      if [ -f "$f" ]; then
+        info "blob OK: $f"
+      else
+        warn "blob отсутствует: $f"
+        missing=1
+      fi
+    done
+  fi
+
+  if [ "$missing" -eq 1 ]; then
+    warn "Часть blobs отсутствует. Стратегии с fake-пакетами могут не работать."
+    ask "Скачать blobs из репозитория strategies/blobs/? [Y/n]: "
+    read -r ans
+    case "$ans" in
+      n|N|н|Н) return 0 ;;
+    esac
+    download_blobs "$ver"
+  fi
+}
+
+download_file() {
+  local url="$1"
+  local dest="$2"
+  mkdir -p "$(dirname "$dest")"
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL "$url" -o "$dest"
+  else
+    wget -qO "$dest" "$url"
+  fi
+}
+
+download_blobs() {
+  local ver="$1"
+  local base="${RAW_BASE}/strategies/blobs"
+  local dest_dir
+  if [ "$ver" = "1" ]; then
+    dest_dir="/opt/etc/nfqws"
+  else
+    dest_dir="/opt/etc/nfqws2/blobs"
+  fi
+  mkdir -p "$dest_dir"
+  for name in tls_clienthello.bin quic_initial.bin; do
+    info "Скачивание $name ..."
+    if download_file "${base}/${name}" "${dest_dir}/${name}"; then
+      info "  → ${dest_dir}/${name}"
+    else
+      warn "  не удалось скачать $name (файл может отсутствовать в репозитории)"
+    fi
+  done
+}
+
+# Обновление lists из репозитория
+update_lists() {
+  local ver="$1"
+  local dest_dir base name
+  if [ "$ver" = "1" ]; then
+    dest_dir="/opt/etc/nfqws"
+  else
+    dest_dir="/opt/etc/nfqws2/lists"
+  fi
+  base="${RAW_BASE}/strategies/lists"
+  mkdir -p "$dest_dir"
+
+  for name in user.list exclude.list ipset.list ipset_exclude.list; do
+    info "Обновление $name ..."
+    if download_file "${base}/${name}" "${dest_dir}/${name}"; then
+      info "  → ${dest_dir}/${name}"
+    else
+      warn "  не удалось скачать $name (пропуск)"
+    fi
+  done
+  # auto.list не трогаем — наполняется демоном
+  info "Списки обновлены (auto.list не изменялся)."
+}
+
 apply_strategy() {
   local ver="$1"      # 1 или 2
   local conf_name="$2"
@@ -230,19 +423,35 @@ apply_strategy() {
   info "Создан бэкап: ${conf_dest}.bak.*"
 
   # Если скачанный файл — полный конфиг, заменяем; иначе подставляем только стратегию
-  # Простая эвристика: если в файле есть ISP_INTERFACE или NFQWS_ARGS — считаем полным конфигом
   if grep -qE '^(ISP_INTERFACE|NFQWS_ARGS|NFQWS_BASE_ARGS)=' "$tmp" 2>/dev/null; then
     cp "$tmp" "$conf_dest"
     info "Конфиг полностью заменён стратегией $conf_name"
   else
-    # Иначе предполагаем, что файл содержит только строки NFQWS_ARGS* / NFQWS_BASE_ARGS
-    # и аккуратно обновляем существующий конфиг
     warn "Файл стратегии не выглядит как полный конфиг — попробуйте вручную."
     cat "$tmp"
+    rm -f "$tmp"
+    return 1
   fi
   rm -f "$tmp"
 
+  echo
+  info "=== Проверка ISP_INTERFACE ==="
+  fix_isp_interface "$conf_dest"
+
+  echo
+  info "=== Проверка blobs ==="
+  check_blobs "$ver"
+
+  echo
+  ask "Обновить lists (user/exclude/ipset) из репозитория? [y/N]: "
+  read -r ans
+  case "$ans" in
+    y|Y|д|Д) update_lists "$ver" ;;
+    *) info "Списки не обновлялись." ;;
+  esac
+
   # Перезапуск сервиса
+  echo
   if [ "$ver" = "1" ]; then
     /opt/etc/init.d/S51nfqws restart 2>/dev/null || true
   else
