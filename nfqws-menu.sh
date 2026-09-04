@@ -301,13 +301,36 @@ fix_isp_interface() {
 #   любые абсолютные пути *.bin в значении переменных
 extract_blob_paths() {
   local conf="$1"
-  # убрать комментарии, развернуть в одну строку-поток, вытащить пути
   grep -vE '^[[:space:]]*#' "$conf" 2>/dev/null | \
   tr ' \t' '\n' | \
   sed -n \
     -e 's/.*@\(\/[^[:space:]"]*\.bin\).*/\1/p' \
     -e 's/.*=\(\/[^[:space:]"]*\.bin\).*/\1/p' | \
   sort -u
+}
+
+# Извлечь пути к .list из конфига
+# --hostlist=, --hostlist-auto=, --hostlist-exclude=, --ipset=, --ipset-exclude=
+# и любые абсолютные пути *.list
+extract_list_paths() {
+  local conf="$1"
+  grep -vE '^[[:space:]]*#' "$conf" 2>/dev/null | \
+  tr ' \t' '\n' | \
+  sed -n \
+    -e 's/.*[=:]\(\/[^[:space:]"]*\.list\).*/\1/p' \
+    -e 's/^\(\/[^[:space:]"]*\.list\)$/\1/p' | \
+  sort -u
+}
+
+download_file() {
+  local url="$1"
+  local dest="$2"
+  mkdir -p "$(dirname "$dest")"
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL "$url" -o "$dest"
+  else
+    wget -qO "$dest" "$url"
+  fi
 }
 
 # Проверка blobs, реально используемых в конфиге
@@ -363,18 +386,72 @@ check_blobs() {
   done
 }
 
-download_file() {
-  local url="$1"
-  local dest="$2"
-  mkdir -p "$(dirname "$dest")"
-  if command -v curl >/dev/null 2>&1; then
-    curl -fsSL "$url" -o "$dest"
-  else
-    wget -qO "$dest" "$url"
+# Проверка .list, реально используемых в конфиге
+check_lists() {
+  local ver="$1"
+  local conf="$2"
+  local missing=0
+  local paths path name
+  local missing_list=""
+
+  if [ ! -f "$conf" ]; then
+    warn "Конфиг $conf не найден — проверка lists пропущена."
+    return 1
   fi
+
+  paths=$(extract_list_paths "$conf")
+  if [ -z "$paths" ]; then
+    info "В конфиге нет ссылок на .list — проверка не требуется."
+    return 0
+  fi
+
+  info "Lists, указанные в конфиге:"
+  for path in $paths; do
+    if [ -f "$path" ]; then
+      info "  OK  $path"
+    else
+      warn "  нет $path"
+      missing=1
+      missing_list="$missing_list $path"
+    fi
+  done
+
+  if [ "$missing" -eq 0 ]; then
+    info "Все используемые lists на месте."
+    return 0
+  fi
+
+  warn "Часть lists отсутствует."
+  ask "Скачать/создать отсутствующие lists? [Y/n]: "
+  read -r ans
+  case "$ans" in
+    n|N|н|Н) return 0 ;;
+  esac
+
+  for path in $missing_list; do
+    name=$(basename "$path")
+    mkdir -p "$(dirname "$path")"
+    # auto.list наполняется демоном — достаточно создать пустой файл
+    case "$name" in
+      auto.list)
+        touch "$path"
+        info "  создан пустой $path (заполняется демоном)"
+        ;;
+      *)
+        info "Скачивание $name → $path"
+        if download_file "${RAW_BASE}/strategies/lists/${name}" "$path"; then
+          info "  готово"
+        else
+          # если в репозитории нет — создать пустой, чтобы сервис не падал
+          touch "$path"
+          warn "  нет в репозитории — создан пустой $path"
+        fi
+        ;;
+    esac
+  done
 }
 
-# Обновление lists из репозитория
+# Обновление lists из репозитория (принудительно все)
 update_lists() {
   local ver="$1"
   local dest_dir base name
@@ -449,11 +526,15 @@ apply_strategy() {
   check_blobs "$ver" "$conf_dest"
 
   echo
-  ask "Обновить lists (user/exclude/ipset) из репозитория? [y/N]: "
+  info "=== Проверка lists ==="
+  check_lists "$ver" "$conf_dest"
+
+  echo
+  ask "Принудительно обновить все lists (user/exclude/ipset) из репозитория? [y/N]: "
   read -r ans
   case "$ans" in
     y|Y|д|Д) update_lists "$ver" ;;
-    *) info "Списки не обновлялись." ;;
+    *) info "Принудительное обновление lists пропущено." ;;
   esac
 
   # Перезапуск сервиса
