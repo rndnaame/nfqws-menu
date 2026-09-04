@@ -466,6 +466,20 @@ apply_strategy() {
   info "Сервис перезапущен."
 }
 
+# Определить текущую стратегию по маркеру в конфиге
+# Ищем строку вида:  #  general (ALT13).bat  ->  nfqws2
+# Возвращаем имя в нижнем регистре без расширения (alt13)
+detect_current_strategy() {
+  local conf="$1"
+  [ -f "$conf" ] || return 0
+  # взять содержимое скобок из строк с general
+  grep -iE 'general[[:space:]]*\(' "$conf" 2>/dev/null | \
+    sed -n 's/.*(\([^)]*\)).*/\1/p' | \
+    head -1 | \
+    tr '[:upper:]' '[:lower:]' | \
+    tr -d '[:space:]'
+}
+
 menu_strategy() {
   local has1=0 has2=0
   is_installed "nfqws-keenetic"  && has1=1
@@ -500,6 +514,19 @@ menu_strategy() {
     ver=2
   fi
 
+  local conf_dest
+  if [ "$ver" = "1" ]; then
+    conf_dest="/opt/etc/nfqws/nfqws.conf"
+  else
+    conf_dest="/opt/etc/nfqws2/nfqws2.conf"
+  fi
+
+  local current_id
+  current_id=$(detect_current_strategy "$conf_dest")
+  if [ -n "$current_id" ]; then
+    info "Текущая стратегия в конфиге: $current_id"
+  fi
+
   local dir="nfqws${ver}"
   echo
   info "Доступные стратегии ($dir):"
@@ -513,9 +540,17 @@ menu_strategy() {
 
   local i=1
   local files=""
+  local f base mark
   # shellcheck disable=SC2086
   for f in $list; do
-    printf "  %2d) %s\n" "$i" "$f"
+    base=$(echo "$f" | sed 's/\.conf$//' | tr '[:upper:]' '[:lower:]')
+    mark=""
+    if [ -n "$current_id" ] && [ "$base" = "$current_id" ]; then
+      # подсветка текущей: зелёный + метка
+      printf "  %s%2d) %s  <-- текущая%s\n" "$GREEN$BOLD" "$i" "$f" "$NC"
+    else
+      printf "  %2d) %s\n" "$i" "$f"
+    fi
     files="$files $f"
     i=$((i + 1))
   done
