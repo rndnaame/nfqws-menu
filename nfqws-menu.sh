@@ -777,19 +777,19 @@ update_ipset_list() {
 # ---------------------------------------------------------------------------
 # 5. Обход блокировки DoT/DoH
 # ---------------------------------------------------------------------------
-DOT_DOH_STRATEGY='#DNS
---filter-tcp=443,853 --filter-l7=tls
---hostlist-domains=dot.pub,doh.pub,controld.com,opendns.com,anycast.censurfridns.dk,dns.alidns.com,libredns.gr,cloudflare-dns.com,one.one.one.one,opennameserver.org,cleanbrowsing.org,dns.adguard-dns.com,dns.comss.one,dns.nextdns.io,freedns.controld.com,dns10.quad9.net,dns.google
---out-range=-d10
---payload=tls_client_hello
---lua-desync=circular:fails=2:time=60:retrans=3:nld=2
---lua-desync=multisplit:pos=sniext+2:seqovl=3:padencap
---lua-desync=fake:blob=fake_default_tls:optional:tcp_seq=-10000:tcp_ack=-66000:badsum:tls_mod=rnd,dupsid,sni=rzd.ru:repeat=2
---new
---filter-udp=853 --filter-l7=quic
---hostlist-domains=dns.adguard-dns.com,dns.nextdns.io
---payload=quic_initial
---lua-desync=send:ipfrag:ipfrag_pos_udp=128'
+DOT_DOH_STRATEGY='               #DNS
+               --filter-tcp=443,853 --filter-l7=tls
+               --hostlist-domains=dot.pub,doh.pub,controld.com,opendns.com,anycast.censurfridns.dk,dns.alidns.com,libredns.gr,cloudflare-dns.com,one.one.one.one,opennameserver.org,cleanbrowsing.org,dns.adguard-dns.com,dns.comss.one,dns.nextdns.io,freedns.controld.com,dns10.quad9.net,dns.google
+               --out-range=-d10
+               --payload=tls_client_hello
+               --lua-desync=circular:fails=2:time=60:retrans=3:nld=2
+               --lua-desync=multisplit:pos=sniext+2:seqovl=3:padencap
+               --lua-desync=fake:blob=fake_default_tls:optional:tcp_seq=-10000:tcp_ack=-66000:badsum:tls_mod=rnd,dupsid,sni=rzd.ru:repeat=2
+               --new
+               --filter-udp=853 --filter-l7=quic
+               --hostlist-domains=dns.adguard-dns.com,dns.nextdns.io
+               --payload=quic_initial
+               --lua-desync=send:ipfrag:ipfrag_pos_udp=128'
 
 menu_dot_doh() {
   if ! is_installed "nfqws2-keenetic"; then
@@ -1354,16 +1354,23 @@ main_menu() {
     echo
     detect_arch
     show_installed
-    printf '%s\n' "${BOLD}Меню:${NC}"
-    echo "  1.  Установка NFQWS, NFQWS2"
-    echo "  2.  Установка веб-интерфейса"
-    echo "  3.  Установка стратегии"
-    echo "  4.  Обновление IPSet List"
-    echo "  5.  Обход блокировки DoT/DoH"
-    echo "  10. dpi-detector (rust/4Mb) (Pre-release)"
-    echo "  11. Удаление пакетов"
-    echo "  99. Обновить скрипт"
-    echo "  00. Выход"
+    printf '%s\n' "${CYAN}${BOLD}[::]  КОМПОНЕНТЫ${NC}"
+    echo "      1.  Установить NFQWS/NFQWS2"
+    echo "      2.  Установить веб-интерфейс"
+    echo
+    printf '%s\n' "${CYAN}${BOLD}[::]  СТРАТЕГИИ/СПИСКИ${NC}"
+    echo "      3.  Выбор стратегии"
+    echo "      4.  Обновить IPSet List"
+    echo "      5.  Обход блокировки DoT/DoH"
+    echo
+    printf '%s\n' "${CYAN}${BOLD}[::]  УТИЛИТЫ${NC}"
+    echo "      10. dpi-detector"
+    echo
+    printf '%s\n' "${CYAN}${BOLD}[::]  УДАЛЕНИЕ${NC}"
+    echo "      11. Удаление пакетов"
+    echo
+    echo "      99. Обновить скрипт"
+    echo "      00. Выход"
     echo
     ask "Выберите пункт [Enter = выход]: "
     read -r choice
