@@ -31,9 +31,9 @@
 
 ```bash
 # Скачать и запустить
-wget -O /tmp/nfqws-menu.sh https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/nfqws-menu.sh
-chmod +x /tmp/nfqws-menu.sh
-sh /tmp/nfqws-menu.sh
+wget -O /opt/nfqws-menu.sh https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/nfqws-menu.sh
+chmod +x /opt/nfqws-menu.sh
+sh /opt/nfqws-menu.sh
 ```
 
 или одной строкой:
