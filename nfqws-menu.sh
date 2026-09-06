@@ -10,7 +10,7 @@
 
 set -e
 
-SCRIPT_VERSION="0.4.0"
+SCRIPT_VERSION="0.4.1"
 
 REPO_URL="https://github.com/rndnaame/nfqws-menu"
 RAW_BASE="https://raw.githubusercontent.com/rndnaame/nfqws-menu/main"
@@ -1061,7 +1061,7 @@ show_dns_servers() {
       for (k in doh_tot) doh_c++
 
       print c_cyan "┌────────────────────────────────────────────────────────┐" c_reset
-      print c_cyan "│" c_bold "          УПРАВЛЕНИЕ DNS СЕРВЕРАМИ KEENETIC             " c_cyan "│" c_reset
+      print c_cyan "│" c_bold "          УПРАВЛЕНИЕ DNS СЕРВЕРАМИ KEENETIC            " c_cyan "│" c_reset
       print c_cyan "└────────────────────────────────────────────────────────┘" c_reset
 
       print "\n" c_bold c_magenta "  [ DoT Серверы ]" c_reset " " c_dim "[" dot_c+0 "/8]" c_reset
@@ -1091,8 +1091,12 @@ show_dns_servers() {
 
 dns_save_config() {
   printf '%s' "Сохранение конфигурации..."
-  ndmc -c system configuration save > /dev/null 2>&1
-  printf ' %s\n' "${GREEN}[ГОТОВО]${NC}"
+  if ndmc -c system configuration save > /dev/null 2>&1; then
+    printf ' %s\n' "${GREEN}[ГОТОВО]${NC}"
+  else
+    printf ' %s\n' "${RED}[ОШИБКА]${NC}"
+    warn "ndmc не смог сохранить конфигурацию"
+  fi
   sleep 1
 }
 
@@ -1108,7 +1112,7 @@ apply_dot() {
   [ -n "$domain" ] && cmd="$cmd domain $domain"
 
   printf '%s\n' "${CYAN}Применение DoT ($ip):${NC} ndmc -c \"$cmd\""
-  ndmc -c "$cmd" > /dev/null 2>&1
+  ndmc -c "$cmd" > /dev/null 2>&1 || warn "ndmc вернул ошибку при добавлении DoT $ip"
 }
 
 apply_doh() {
@@ -1119,7 +1123,7 @@ apply_doh() {
   [ -n "$domain" ] && cmd="$cmd domain $domain"
 
   printf '%s\n' "${CYAN}Применение DoH ($uri):${NC} ndmc -c \"$cmd\""
-  ndmc -c "$cmd" > /dev/null 2>&1
+  ndmc -c "$cmd" > /dev/null 2>&1 || warn "ndmc вернул ошибку при добавлении DoH $uri"
 }
 
 add_dot_menu() {
@@ -1494,15 +1498,23 @@ remove_dns_menu() {
 
       cmd=""
       if [ "$type" = "dot" ]; then
-        [ -z "$port" ] && port="853"
-        cmd="no dns-proxy tls upstream $target $port"
+        # Keenetic: для порта 853 (дефолт) в команде удаления порт указывать нельзя.
+        # Иначе: "no such DNS-over-TLS server: x.x.x.x:853"
+        if [ -n "$port" ] && [ "$port" != "853" ]; then
+          cmd="no dns-proxy tls upstream $target $port"
+        else
+          cmd="no dns-proxy tls upstream $target"
+        fi
       elif [ "$type" = "doh" ]; then
         cmd="no dns-proxy https upstream $target"
       fi
 
       printf '%s\n' "${RED}Удаление:${NC} ndmc -c \"$cmd\""
-      ndmc -c "$cmd" > /dev/null 2>&1
-      removed_any=1
+      if ndmc -c "$cmd" > /dev/null 2>&1; then
+        removed_any=1
+      else
+        warn "ndmc не смог удалить: $target"
+      fi
     fi
   done
 
