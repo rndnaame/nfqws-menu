@@ -21,7 +21,7 @@
 **[Flowseal/zapret-discord-youtube](https://github.com/Flowseal/zapret-discord-youtube)**  
 и адаптированы под формат конфигов `nfqws-keenetic` / `nfqws2-keenetic`.
 
-Подготовлены пользователем **[@nare_51](https://github.com/nare_51)** с использованием искусственного интеллекта.
+Подготовлены пользователем **[@Nare51](https://github.com/Nare51)** с использованием искусственного интеллекта.
 
 ---
 
@@ -39,7 +39,7 @@ sh /opt/nfqws-menu.sh
 или одной строкой:
 
 ```bash
-sh -c "$(wget -qO- https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/nfqws-menu.sh)"
+wget -O /opt/nfqws-menu.sh https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/nfqws-menu.sh && chmod +x /opt/nfqws-menu.sh && sh /opt/nfqws-menu.sh
 ```
 
 ---
@@ -55,15 +55,24 @@ sh -c "$(wget -qO- https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/nf
 3. Предлагает меню:
 
 ```
-1.  Установка NFQWS, NFQWS2
-2.  Установка веб-интерфейса
-3.  Установка стратегии
-4.  Обновление IPSet List
-5.  Обход блокировки DoT/DoH
-10. dpi-detector (rust/4Mb) (Pre-release)
-11. Удаление пакетов
-99. Обновить скрипт
-00. Выход          ← по умолчанию (Enter)
+[::]  КОМПОНЕНТЫ
+      1.  Установить NFQWS/NFQWS2
+      2.  Установить веб-интерфейс
+
+[::]  СТРАТЕГИИ/СПИСКИ
+      3.  Выбор стратегии
+      4.  Обновить IPSet List
+      5.  Обход блокировки DoT/DoH
+      6.  Управление DoT/DoH
+
+[::]  УТИЛИТЫ
+      10. dpi-detector
+
+[::]  УДАЛЕНИЕ
+      11. Удаление пакетов
+
+      99. Обновить скрипт
+      00. Выход
 ```
 
 ### 1. Установка NFQWS / NFQWS2
@@ -159,7 +168,32 @@ https://raw.githubusercontent.com/Flowseal/zapret-discord-youtube/refs/heads/mai
 - TLS (TCP 443/853) и QUIC (UDP 853)
 - Список доменов DNS-сервисов в `--hostlist-domains`
 - Делает бэкап конфига, дописывает стратегию (или создаёт `NFQWS_ARGS_CUSTOM`, если пустой)
+- Добавляет порт `853` в `TCP_PORTS` / `UDP_PORTS` при необходимости
 - Перезапускает `S51nfqws2`
+
+### 6. Управление DoT/DoH
+
+Управление DNS-over-TLS / DNS-over-HTTPS на стороне **Keenetic** через `ndmc` (dns-proxy).
+
+Подменю:
+
+```
+1) Добавить DoT сервер(ы)
+2) Добавить DoH сервер(ы)
+3) Привязать домен к DNS (Пресеты)
+4) Удалить сервер(ы)
+0) Назад
+```
+
+Возможности:
+
+- Просмотр текущих DoT/DoH-серверов и персональных привязок к доменам
+- Добавление DoT/DoH из пресетов (Яндекс, Cloudflare, Quad9, CleanBrowsing, OpenDNS, DNS.SB, dns0.eu, OpenNameServer, японские DNS, Proxy-DNS и др.) или вручную
+- Быстрая привязка доменов (instagram.com, rutor, ntc.party и свой вариант)
+- Удаление выбранных upstream-ов с сохранением конфигурации
+
+> Требуется наличие `ndmc` (штатный CLI Keenetic/Netcraze).  
+> При активном **Интернет-фильтре** часть DoT-серверов может добавляться в конфиг, но помечаться как *disregarded*.
 
 ### 10. dpi-detector (rust/4Mb) (Pre-release)
 
@@ -199,7 +233,7 @@ https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/nfqws-menu.sh
 
 - Перезаписывает текущий файл **без backup**
 - Сразу перезапускает меню (`exec`)
-- Если скрипт был запущен через pipe (`sh -c "$(wget …)"`) — сохраняет в `/opt/bin/nfqws-menu.sh`
+- Рекомендуемый путь установки: `/opt/nfqws-menu.sh`
 
 ---
 
@@ -228,7 +262,7 @@ nfqws-menu/
 4. Закоммитьте и запушьте — скрипт подхватит новый файл через GitHub API.
 
 Стратегии в репозитории основаны на [Flowseal/zapret-discord-youtube](https://github.com/Flowseal/zapret-discord-youtube),  
-подготовлены [@nare_51](https://github.com/nare_51) с использованием ИИ.
+подготовлены [@Nare51](https://github.com/Nare51) с использованием ИИ.
 
 ---
 
@@ -272,6 +306,9 @@ vi /opt/etc/nfqws2/nfqws2.conf           # v2
 ip route | grep ^default
 # или
 route | grep ^default
+
+# DNS-proxy (DoT/DoH)
+ndmc -c show dns-proxy
 ```
 
 ---
@@ -282,5 +319,5 @@ route | grep ^default
 Использование на свой страх и риск. Автор не несёт ответственности за последствия.
 
 Стратегии адаптированы на основе [Flowseal/zapret-discord-youtube](https://github.com/Flowseal/zapret-discord-youtube),  
-подготовлены [@nare_51](https://github.com/nare_51) с использованием искусственного интеллекта.  
+подготовлены [@Nare51](https://github.com/Nare51) с использованием искусственного интеллекта.  
 Официальные пакеты NFQWS: [nfqws](https://github.com/nfqws).
