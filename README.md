@@ -42,6 +42,14 @@ sh /opt/nfqws-menu.sh
 wget -O /opt/nfqws-menu.sh https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/nfqws-menu.sh && chmod +x /opt/nfqws-menu.sh && sh /opt/nfqws-menu.sh
 ```
 
+После первого запуска создаётся symlink для быстрого старта:
+
+```bash
+menu
+```
+
+(` /opt/bin/menu` → `/opt/nfqws-menu.sh` )
+
 ---
 
 ## Что делает меню
