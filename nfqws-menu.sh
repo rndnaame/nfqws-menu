@@ -10,7 +10,7 @@
 
 set -e
 
-SCRIPT_VERSION="0.4.2"
+SCRIPT_VERSION="0.4.3"
 
 REPO_URL="https://github.com/rndnaame/nfqws-menu"
 RAW_BASE="https://raw.githubusercontent.com/rndnaame/nfqws-menu/main"
@@ -1701,6 +1701,12 @@ update_self() {
     return 1
   fi
 
+  # symlink для быстрого запуска: menu
+  if [ -f "$dest" ]; then
+    mkdir -p /opt/bin 2>/dev/null || true
+    ln -sf "$dest" /opt/bin/menu 2>/dev/null || true
+  fi
+
   info "Перезапуск: $run (v$(extract_script_version "$run"))"
   # сбросить унаследованный SCRIPT_PATH, чтобы новый процесс определил путь сам
   unset SCRIPT_PATH
@@ -2019,6 +2025,38 @@ if [ ! -f "$SCRIPT_PATH" ]; then
   done
 fi
 export SCRIPT_PATH
+
+# Быстрый запуск: /opt/bin/menu → /opt/nfqws-menu.sh
+ensure_menu_symlink() {
+  local target="/opt/nfqws-menu.sh"
+  local link="/opt/bin/menu"
+
+  # предпочитаем канонический путь; иначе — текущий SCRIPT_PATH, если он в /opt
+  if [ ! -f "$target" ] && [ -n "$SCRIPT_PATH" ] && [ -f "$SCRIPT_PATH" ]; then
+    case "$SCRIPT_PATH" in
+      /opt/*) target="$SCRIPT_PATH" ;;
+    esac
+  fi
+  [ -f "$target" ] || return 0
+  [ -d /opt/bin ] || mkdir -p /opt/bin 2>/dev/null || return 0
+
+  # уже корректный symlink
+  if [ -L "$link" ]; then
+    local cur
+    cur=$(readlink "$link" 2>/dev/null || true)
+    [ "$cur" = "$target" ] && return 0
+  fi
+
+  # не затирать чужой обычный файл с именем menu
+  if [ -e "$link" ] && [ ! -L "$link" ]; then
+    return 0
+  fi
+
+  ln -sf "$target" "$link" 2>/dev/null || true
+  [ -L "$link" ] && chmod +x "$link" 2>/dev/null || true
+}
+
+ensure_menu_symlink
 
 if ! command -v opkg >/dev/null 2>&1; then
   error "opkg не найден. Скрипт предназначен для Entware (Keenetic/Netcraze)."
