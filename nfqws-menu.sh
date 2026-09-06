@@ -10,7 +10,7 @@
 
 set -e
 
-SCRIPT_VERSION="0.4.1"
+SCRIPT_VERSION="0.4.2"
 
 REPO_URL="https://github.com/rndnaame/nfqws-menu"
 RAW_BASE="https://raw.githubusercontent.com/rndnaame/nfqws-menu/main"
@@ -1021,6 +1021,16 @@ show_dns_servers() {
     in_dot && /domain:/ { domain=$2 }
 
     /server-https:/ {
+      # Сначала сбросить незакрытый DoT-блок (иначе последний server-tls теряется)
+      if (in_dot && addr != "") {
+        target = (sni != "") ? addr " " sni : addr
+        if (domain == "") {
+          dot_gen[dot_gen_cnt++] = "  " c_cyan "🔒" c_reset " " target
+        } else {
+          dom_list[dom_cnt++] = "  " c_yellow "🌐" c_reset " " sprintf("%-18s", domain) " " c_dim "➔" c_reset " " target " " c_magenta "[DoT]" c_reset
+        }
+        if (target != "") dot_tot[target] = 1
+      }
       if (in_doh && uri != "") {
         gsub(/[ \t\r\n]/, "", uri)
         if (domain == "") {
@@ -1030,7 +1040,7 @@ show_dns_servers() {
         }
         if (uri != "") doh_tot[uri] = 1
       }
-      in_doh=1; in_dot=0; uri=""; domain=""; next
+      in_doh=1; in_dot=0; addr=""; sni=""; uri=""; domain=""; next
     }
     in_doh && /uri:/ { reading_uri=1; uri=$2; next }
     in_doh && reading_uri && (/format:/ || /spki:/ || /interface:/ || /domain:/) { reading_uri=0 }
@@ -1394,6 +1404,19 @@ remove_dns_menu() {
     in_dot && /domain:/ { domain=$2 }
 
     /server-https:/ {
+      # Сначала сбросить незакрытый DoT-блок (иначе последний server-tls теряется)
+      if (in_dot && addr != "") {
+        p = (port != "") ? port : "853"
+        key = addr "|" p
+        if (!(key in dot_order)) { dot_addrs[dot_cnt++] = key; dot_order[key] = 1 }
+        if (domain != "") {
+          dom_key = key "|" domain
+          if (!(dom_key in dot_dom_seen)) {
+            dot_dom_seen[dom_key] = 1
+            dot_doms[key] = (dot_doms[key] != "") ? dot_doms[key] ", " domain : domain
+          }
+        }
+      }
       if (in_doh && uri != "") {
         gsub(/[ \t\r\n]/, "", uri)
         if (!(uri in doh_order)) { doh_addrs[doh_cnt++] = uri; doh_order[uri] = 1 }
@@ -1405,7 +1428,7 @@ remove_dns_menu() {
           }
         }
       }
-      in_doh=1; in_dot=0; uri=""; domain=""; next
+      in_doh=1; in_dot=0; addr=""; port=""; uri=""; domain=""; next
     }
     in_doh && /uri:/ { reading_uri=1; uri=$2; next }
     in_doh && reading_uri && (/format:/ || /spki:/ || /interface:/ || /domain:/) { reading_uri=0 }
