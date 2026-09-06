@@ -1061,7 +1061,7 @@ show_dns_servers() {
       for (k in doh_tot) doh_c++
 
       print c_cyan "┌────────────────────────────────────────────────────────┐" c_reset
-      print c_cyan "│" c_bold "          УПРАВЛЕНИЕ DNS СЕРВЕРАМИ KEENETIC            " c_cyan "│" c_reset
+      print c_cyan "│" c_bold "          УПРАВЛЕНИЕ DNS СЕРВЕРАМИ KEENETIC             " c_cyan "│" c_reset
       print c_cyan "└────────────────────────────────────────────────────────┘" c_reset
 
       print "\n" c_bold c_magenta "  [ DoT Серверы ]" c_reset " " c_dim "[" dot_c+0 "/8]" c_reset
