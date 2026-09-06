@@ -1709,7 +1709,7 @@ update_self() {
 }
 
 # ---------------------------------------------------------------------------
-# 10. dpi-detector (rust/4Mb) Pre-release
+# 10. dpi-detector (rust) — актуальная версия через install.sh
 # ---------------------------------------------------------------------------
 DPI_DETECTOR_INSTALL_URL="https://raw.githubusercontent.com/Runnin4ik/dpi-detector/rust/install.sh"
 
@@ -1755,7 +1755,7 @@ cleanup_dpi_detector_dupes() {
 
 menu_dpi_detector() {
   echo
-  info "dpi-detector (rust, ~4Mb) — Pre-release v4.0.0-rust"
+  info "dpi-detector (rust) — установка актуальной версии"
 
   # Уже установлен — сразу запуск без вопросов
   if [ -x /opt/bin/dpi-detector ]; then
