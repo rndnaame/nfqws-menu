@@ -195,13 +195,21 @@ https://raw.githubusercontent.com/Flowseal/zapret-discord-youtube/refs/heads/mai
 > Требуется наличие `ndmc` (штатный CLI Keenetic/Netcraze).  
 > При активном **Интернет-фильтре** часть DoT-серверов может добавляться в конфиг, но помечаться как *disregarded*.
 
-### 10. dpi-detector (rust/4Mb) (Pre-release)
+### 10. dpi-detector (rust)
 
-Устанавливает [dpi-detector](https://github.com/Runnin4ik/dpi-detector) (сборка rust, ~4Mb, pre-release v4.0.0-rust):
+Устанавливает актуальную версию [dpi-detector](https://github.com/Runnin4ik/dpi-detector) (ветка `rust`, для Entware/роутеров):
 
 ```bash
-curl -fsSL https://github.com/Runnin4ik/dpi-detector/releases/download/v4.0.0-rust/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/Runnin4ik/dpi-detector/rust/install.sh | sh
 ```
+
+или через `wget`:
+
+```bash
+wget -qO- https://raw.githubusercontent.com/Runnin4ik/dpi-detector/rust/install.sh | sh
+```
+
+Установщик сам подбирает бинарник под архитектуру и ставит последнюю доступную версию (на момент обновления README — `v5.0.0-alpha.6`).
 
 ### 11. Удаление пакетов
 
