@@ -10,7 +10,7 @@
 
 set -e
 
-SCRIPT_VERSION="0.4.5"
+SCRIPT_VERSION="0.4.6"
 
 REPO_URL="https://github.com/rndnaame/nfqws-menu"
 RAW_BASE="https://raw.githubusercontent.com/rndnaame/nfqws-menu/main"
@@ -1835,6 +1835,17 @@ KEENKIT_INSTALL_URL="https://raw.githubusercontent.com/spatiumstas/KeenKit/main/
 
 menu_keenkit() {
   echo
+  # Уже установлен — сразу запуск без скачивания
+  if [ -f /opt/keenkit.sh ]; then
+    info "Найден /opt/keenkit.sh — запуск..."
+    if [ -c /dev/tty ]; then
+      sh /opt/keenkit.sh </dev/tty
+    else
+      sh /opt/keenkit.sh
+    fi
+    return 0
+  fi
+
   info "KeenKit — установка"
   info "Источник: $KEENKIT_INSTALL_URL"
   echo
