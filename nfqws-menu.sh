@@ -86,7 +86,7 @@ ui_apply_lang() {
       LBL_4="Обновить IPSet List"
       LBL_5="Обход блокировки DoT/DoH"
       LBL_6="Управление DoT/DoH"
-      LBL_77="Сменить язык"
+      LBL_77="Change language"
       LBL_88="Удаление пакетов"
       LBL_99="Обновить скрипт"
       LBL_00="Выход"
