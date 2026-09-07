@@ -1827,119 +1827,37 @@ extract_script_version() {
 }
 
 update_self() {
-  local self url tmp remote_ver dest
-  self=$(resolve_script_path)
-  # cache-bust: иначе raw.githubusercontent.com может отдать старую копию
+  local url tmp remote_ver dest="/opt/nfqws-menu.sh"
   url="${RAW_BASE}/nfqws-menu.sh?t=$(date +%s)"
 
-  echo
-  info "Локальная версия:  $SCRIPT_VERSION"
-  info "Текущий файл:      $self"
-  info "Источник:          ${RAW_BASE}/nfqws-menu.sh"
-  ask "Скачать свежую версию и перезапустить меню? [Y/n]: "
-  read -r ans
-  case "$ans" in
-    n|N|н|Н) info "Отменено."; return 0 ;;
-  esac
-
   tmp="/tmp/nfqws-menu-update-$$.sh"
-  info "Скачивание..."
-  if ! download_file "$url" "$tmp"; then
-    # fallback без query-string
+  if ! download_file "$url" "$tmp" 2>/dev/null; then
     url="${RAW_BASE}/nfqws-menu.sh"
-    if ! download_file "$url" "$tmp"; then
-      error "Не удалось скачать обновление."
+    if ! download_file "$url" "$tmp" 2>/dev/null; then
       rm -f "$tmp"
       return 1
     fi
   fi
 
-  if ! head -1 "$tmp" | grep -qE '^#!/(usr/)?bin/(sh|bash)'; then
-    error "Скачанный файл не похож на shell-скрипт."
-    rm -f "$tmp"
-    return 1
-  fi
-  if ! grep -q 'SCRIPT_VERSION=' "$tmp" 2>/dev/null; then
-    error "В скачанном файле нет SCRIPT_VERSION — отмена."
+  if ! head -1 "$tmp" | grep -qE '^#!/(usr/)?bin/(sh|bash)' || ! grep -q 'SCRIPT_VERSION=' "$tmp" 2>/dev/null; then
     rm -f "$tmp"
     return 1
   fi
 
   remote_ver=$(extract_script_version "$tmp")
   [ -z "$remote_ver" ] && remote_ver="?"
-  info "Версия в репозитории: $remote_ver"
 
-  if [ "$remote_ver" = "$SCRIPT_VERSION" ]; then
-    info "Уже актуальная версия ($SCRIPT_VERSION)."
-    ask "Всё равно перезаписать и перезапустить? [y/N]: "
-    read -r ans
-    case "$ans" in
-      y|Y|д|Д) ;;
-      *) rm -f "$tmp"; info "Отменено."; return 0 ;;
-    esac
-  fi
-
-  # Канонический путь + текущий файл + типичные места копий
-  mkdir -p /opt/ 2>/dev/null || true
-  dest="/opt/nfqws-menu.sh"
-
-  install_copy() {
-    local target="$1"
-    [ -z "$target" ] && return 1
-    # каталог должен существовать и быть доступен на запись
-    local dir
-    dir=$(dirname "$target")
-    [ -d "$dir" ] || return 1
-    [ -w "$dir" ] || return 1
-    cat "$tmp" > "$target" || return 1
-    chmod +x "$target" 2>/dev/null || true
-    # проверка, что записалось
-    local v
-    v=$(extract_script_version "$target")
-    if [ "$v" != "$remote_ver" ] && [ "$remote_ver" != "?" ]; then
-      warn "  после записи версия не совпала: $target → $v (ожидали $remote_ver)"
-      return 1
-    fi
-    info "  обновлён: $target (v$v)"
-    return 0
-  }
-
-  info "Установка v${remote_ver}..."
-  install_copy "$dest" || true
-
-  if [ -n "$self" ] && [ "$self" != "$dest" ]; then
-    install_copy "$self" || true
-  fi
-  # типичные копии на роутере
-  for extra in /opt/root/nfqws-menu.sh /tmp/nfqws-menu.sh; do
-    if [ -f "$extra" ] && [ "$extra" != "$self" ] && [ "$extra" != "$dest" ]; then
-      install_copy "$extra" || true
-    fi
-  done
-
-  rm -f "$tmp"
-
-  # Запуск с канонического пути, если он есть
-  local run="$dest"
-  if [ ! -f "$run" ]; then
-    run="$self"
-  fi
-  if [ ! -f "$run" ]; then
-    error "Некуда сохранить скрипт — обновление не применено."
+  if ! cat "$tmp" > "$dest"; then
+    rm -f "$tmp"
     return 1
   fi
+  
+  chmod +x "$dest" 2>/dev/null || true
+  rm -f "$tmp"
 
-  # symlink для быстрого запуска: menu
-  if [ -f "$dest" ]; then
-    mkdir -p /opt/bin 2>/dev/null || true
-    ln -sf "$dest" /opt/bin/menu 2>/dev/null || true
-  fi
-
-  info "Перезапуск: $run (v$(extract_script_version "$run"))"
-  # сбросить унаследованный SCRIPT_PATH, чтобы новый процесс определил путь сам
   unset SCRIPT_PATH
-  export SCRIPT_PATH="$run"
-  exec sh "$run"
+  export SCRIPT_PATH="$dest"
+  exec sh "$dest"
 }
 
 # ---------------------------------------------------------------------------
