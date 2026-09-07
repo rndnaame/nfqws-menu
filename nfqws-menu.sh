@@ -86,7 +86,7 @@ ui_apply_lang() {
       LBL_4="Обновить IPSet List"
       LBL_5="Обход блокировки DoT/DoH"
       LBL_6="Управление DoT/DoH"
-      LBL_77="Change language"
+      LBL_77="Сменить язык"
       LBL_88="Удаление пакетов"
       LBL_99="Обновить скрипт"
       LBL_00="Выход"
@@ -399,7 +399,7 @@ install_nfqws1() {
   info "Установка nfqws-keenetic (версия 1)..."
   install_deps
   mkdir -p /opt/etc/opkg
-  echo "src/gz nfqws-keenetic https://nfqws.github.io/nfqws-keenetic/all" > /opt/etc/opkg/nfqws-keenetic.conf
+  echo "src/gz nfqws-keenetic https://nfqws.github.io/nfqws-keenetic/$ARCH" > /opt/etc/opkg/nfqws-keenetic.conf
   opkg update
   opkg install nfqws-keenetic
   info "nfqws-keenetic установлен."
@@ -419,7 +419,7 @@ install_nfqws2() {
   install_deps
   mkdir -p /opt/etc/opkg
   # Универсальный репозиторий (рекомендуется официальной документацией)
-  echo "src/gz nfqws2-keenetic https://nfqws.github.io/nfqws2-keenetic/all" > /opt/etc/opkg/nfqws2-keenetic.conf
+  echo "src/gz nfqws2-keenetic https://nfqws.github.io/nfqws2-keenetic/$ARCH" > /opt/etc/opkg/nfqws2-keenetic.conf
   opkg update
   opkg install nfqws2-keenetic
   info "nfqws2-keenetic установлен."
