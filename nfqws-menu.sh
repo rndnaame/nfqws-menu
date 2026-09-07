@@ -10,7 +10,7 @@
 
 set -e
 
-SCRIPT_VERSION="0.4.6"
+SCRIPT_VERSION="0.4.7"
 
 REPO_URL="https://github.com/rndnaame/nfqws-menu"
 RAW_BASE="https://raw.githubusercontent.com/rndnaame/nfqws-menu/main"
@@ -1937,6 +1937,20 @@ remove_dpi_detector() {
   fi
 }
 
+is_awg_manager_installed() {
+  is_installed "awg-manager" || [ -d /opt/etc/awg-manager ]
+}
+
+remove_awg_manager() {
+  if is_installed "awg-manager"; then
+    opkg remove awg-manager 2>/dev/null || opkg remove --autoremove awg-manager 2>/dev/null || true
+  fi
+  if [ -d /opt/etc/awg-manager ]; then
+    rm -rf /opt/etc/awg-manager && info "  удалён каталог: /opt/etc/awg-manager"
+  fi
+  info "awg-manager удалён."
+}
+
 menu_remove() {
   echo
   printf '%s\n' "${BOLD}Удаление:${NC}"
@@ -1947,6 +1961,7 @@ menu_remove() {
   is_installed "nfqws2-keenetic"    && items="$items nfqws2-keenetic"    && types="$types opkg"
   is_installed "nfqws-keenetic-web" && items="$items nfqws-keenetic-web" && types="$types opkg"
   is_dpi_detector_installed         && items="$items dpi-detector"      && types="$types bin"
+  is_awg_manager_installed          && items="$items awg-manager"       && types="$types opkg"
 
   local i=1
   local p
@@ -2000,6 +2015,8 @@ menu_remove() {
         y|Y|д|Д)
           if [ "$target" = "dpi-detector" ]; then
             remove_dpi_detector
+          elif [ "$target" = "awg-manager" ]; then
+            remove_awg_manager
           else
             opkg remove --autoremove "$target"
             info "$target удалён."
