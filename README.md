@@ -75,9 +75,11 @@ menu
 
 [::]  УТИЛИТЫ
       10. dpi-detector
+      11. awg-manager
+      12. KeenKit
 
 [::]  УДАЛЕНИЕ
-      11. Удаление пакетов
+      88. Удаление пакетов
 
       99. Обновить скрипт
       00. Выход
@@ -219,7 +221,23 @@ wget -qO- https://raw.githubusercontent.com/Runnin4ik/dpi-detector/rust/install.
 
 Установщик сам подбирает бинарник под архитектуру и ставит последнюю доступную версию (на момент обновления README — `v5.0.0-alpha.6`).
 
-### 11. Удаление пакетов
+### 11. awg-manager
+
+Запускает установщик [awg-compressed](https://github.com/rndnaame/awg-compressed) (AmneziaWG manager):
+
+```bash
+curl -sL https://raw.githubusercontent.com/rndnaame/awg-compressed/main/install-compressed.sh | sh
+```
+
+### 12. KeenKit
+
+Запускает установщик [KeenKit](https://github.com/spatiumstas/KeenKit):
+
+```bash
+curl -L -s "https://raw.githubusercontent.com/spatiumstas/KeenKit/main/install.sh" > /tmp/install.sh && sh /tmp/install.sh
+```
+
+### 88. Удаление пакетов
 
 Показывает установленные компоненты и позволяет удалить выборочно:
 

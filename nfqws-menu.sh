@@ -10,7 +10,7 @@
 
 set -e
 
-SCRIPT_VERSION="0.4.3"
+SCRIPT_VERSION="0.4.5"
 
 REPO_URL="https://github.com/rndnaame/nfqws-menu"
 RAW_BASE="https://raw.githubusercontent.com/rndnaame/nfqws-menu/main"
@@ -1801,7 +1801,64 @@ menu_dpi_detector() {
 }
 
 # ---------------------------------------------------------------------------
-# 11. Удаление пакетов
+# 11. awg-manager (AmneziaWG compressed installer)
+# ---------------------------------------------------------------------------
+AWG_MANAGER_INSTALL_URL="https://raw.githubusercontent.com/rndnaame/awg-compressed/main/install-compressed.sh"
+
+menu_awg_manager() {
+  echo
+  info "awg-manager — установка через awg-compressed"
+  info "Источник: $AWG_MANAGER_INSTALL_URL"
+  echo
+  ask "Запустить установщик awg-manager? [Y/n]: "
+  read -r ans
+  case "$ans" in
+    n|N|н|Н) info "Отменено."; return 0 ;;
+  esac
+
+  info "Запуск установщика..."
+  if command -v curl >/dev/null 2>&1; then
+    curl -sL "$AWG_MANAGER_INSTALL_URL" | sh
+  elif command -v wget >/dev/null 2>&1; then
+    wget -qO- "$AWG_MANAGER_INSTALL_URL" | sh
+  else
+    error "Нужны curl или wget."
+    return 1
+  fi
+  info "Установщик awg-manager завершил работу."
+}
+
+# ---------------------------------------------------------------------------
+# 12. KeenKit
+# ---------------------------------------------------------------------------
+KEENKIT_INSTALL_URL="https://raw.githubusercontent.com/spatiumstas/KeenKit/main/install.sh"
+
+menu_keenkit() {
+  echo
+  info "KeenKit — установка"
+  info "Источник: $KEENKIT_INSTALL_URL"
+  echo
+  ask "Запустить установщик KeenKit? [Y/n]: "
+  read -r ans
+  case "$ans" in
+    n|N|н|Н) info "Отменено."; return 0 ;;
+  esac
+
+  info "Запуск установщика..."
+  if command -v curl >/dev/null 2>&1; then
+    curl -L -s "$KEENKIT_INSTALL_URL" > /tmp/keenkit-install.sh && sh /tmp/keenkit-install.sh
+  elif command -v wget >/dev/null 2>&1; then
+    wget -qO /tmp/keenkit-install.sh "$KEENKIT_INSTALL_URL" && sh /tmp/keenkit-install.sh
+  else
+    error "Нужны curl или wget."
+    return 1
+  fi
+  rm -f /tmp/keenkit-install.sh 2>/dev/null || true
+  info "Установщик KeenKit завершил работу."
+}
+
+# ---------------------------------------------------------------------------
+# 88. Удаление пакетов
 # ---------------------------------------------------------------------------
 # Удаление резервных копий конфигов/списков (.bak.*, *-opkg)
 remove_backups() {
@@ -1967,9 +2024,11 @@ main_menu() {
     echo
     printf '%s\n' "${CYAN}${BOLD}[::]  УТИЛИТЫ${NC}"
     echo "      10. dpi-detector"
+    echo "      11. awg-manager"
+    echo "      12. KeenKit"
     echo
     printf '%s\n' "${CYAN}${BOLD}[::]  УДАЛЕНИЕ${NC}"
-    echo "      11. Удаление пакетов"
+    echo "      88. Удаление пакетов"
     echo
     echo "      99. Обновить скрипт"
     echo "      00. Выход"
@@ -1985,7 +2044,9 @@ main_menu() {
       5)   menu_dot_doh ;;
       6)   menu_dns_manage ;;
       10)  menu_dpi_detector ;;
-      11)  menu_remove ;;
+      11)  menu_awg_manager ;;
+      12)  menu_keenkit ;;
+      88)  menu_remove ;;
       99)  update_self ;;
       00|0|"")
         info "Выход."
