@@ -10,7 +10,7 @@
 
 set -e
 
-SCRIPT_VERSION="0.5.6"
+SCRIPT_VERSION="0.5.9"
 
 REPO_URL="https://github.com/rndnaame/nfqws-menu"
 RAW_BASE="https://raw.githubusercontent.com/rndnaame/nfqws-menu/main"
@@ -33,6 +33,137 @@ else
   RED= GREEN= YELLOW= BLUE= CYAN= MAGENTA= DIM= NC= BOLD=
 fi
 
+# ---------------------------------------------------------------------------
+# Язык / кодировка UI
+# Файл предпочтения: /opt/etc/nfqws-menu.lang  (ru|en)
+# Env: NFQWS_MENU_UTF8=1|0  или  NFQWS_MENU_LANG=ru|en
+# Авто: SSH → ru (UTF-8), Telnet → en (ASCII)
+# ---------------------------------------------------------------------------
+UI_LANG_FILE="/opt/etc/nfqws-menu.lang"
+
+ui_detect_default_lang() {
+  case "${NFQWS_MENU_LANG:-}" in
+    ru|RU|utf8|UTF8) echo "ru"; return ;;
+    en|EN|ascii|ASCII) echo "en"; return ;;
+  esac
+  case "${NFQWS_MENU_UTF8:-}" in
+    1|yes|true|on|ON)  echo "ru"; return ;;
+    0|no|false|off|OFF) echo "en"; return ;;
+  esac
+  if [ -f "$UI_LANG_FILE" ]; then
+    case "$(cat "$UI_LANG_FILE" 2>/dev/null | tr -d ' \r\n')" in
+      ru|RU) echo "ru"; return ;;
+      en|EN) echo "en"; return ;;
+    esac
+  fi
+  if [ -n "${SSH_CONNECTION:-}" ] || [ -n "${SSH_CLIENT:-}" ] || [ -n "${SSH_TTY:-}" ]; then
+    echo "ru"
+    return
+  fi
+  case "${LC_ALL:-${LC_CTYPE:-${LANG:-}}}" in
+    *[Uu][Tt][Ff]-8*|*[Uu][Tt][Ff]8*) echo "ru"; return ;;
+  esac
+  echo "en"
+}
+
+ui_apply_lang() {
+  # $1 = ru|en
+  UI_LANG="$1"
+  case "$UI_LANG" in
+    ru)
+      UI_UTF8=1
+      RUN_MARK=" ⚡"
+      LBL_ARCH="Архитектура"
+      LBL_INSTALLED="Установленные компоненты:"
+      LBL_NONE="— ничего не установлено —"
+      LBL_COMPONENTS="КОМПОНЕНТЫ"
+      LBL_STRATEGIES="СТРАТЕГИИ/СПИСКИ"
+      LBL_UTILS="УТИЛИТЫ"
+      LBL_REMOVE="СЕРВИС"
+      LBL_1="Установить NFQWS/NFQWS2"
+      LBL_2="Установить веб-интерфейс"
+      LBL_3="Выбор стратегии"
+      LBL_4="Обновить IPSet List"
+      LBL_5="Обход блокировки DoT/DoH"
+      LBL_6="Управление DoT/DoH"
+      LBL_77="Сменить язык"
+      LBL_88="Удаление пакетов"
+      LBL_99="Обновить скрипт"
+      LBL_00="Выход"
+      LBL_PROMPT="Выберите пункт [Enter = выход]: "
+      LBL_BACK="Нажмите Enter для возврата в меню..."
+      LBL_LANG_TITLE="Язык интерфейса"
+      LBL_LANG_CUR="Текущий"
+      LBL_LANG_SAVED="Язык сохранён"
+      ;;
+    *)
+      UI_LANG="en"
+      UI_UTF8=0
+      RUN_MARK=" *"
+      LBL_ARCH="Arch"
+      LBL_INSTALLED="Installed:"
+      LBL_NONE="-- none --"
+      LBL_COMPONENTS="COMPONENTS"
+      LBL_STRATEGIES="STRATEGIES/LISTS"
+      LBL_UTILS="UTILS"
+      LBL_REMOVE="SERVICE"
+      LBL_1="Install NFQWS/NFQWS2"
+      LBL_2="Install web UI"
+      LBL_3="Select strategy"
+      LBL_4="Update IPSet List"
+      LBL_5="Bypass DoT/DoH blocks"
+      LBL_6="Manage DoT/DoH"
+      LBL_77="Change language"
+      LBL_88="Remove packages"
+      LBL_99="Update this script"
+      LBL_00="Exit"
+      LBL_PROMPT="Select item [Enter = exit]: "
+      LBL_BACK="Press Enter to return to menu..."
+      LBL_LANG_TITLE="Interface language"
+      LBL_LANG_CUR="Current"
+      LBL_LANG_SAVED="Language saved"
+      ;;
+  esac
+}
+
+ui_apply_lang "$(ui_detect_default_lang)"
+
+menu_change_language() {
+  echo
+  printf '%s\n' "${BOLD}${LBL_LANG_TITLE}${NC}"
+  printf '  %s: %s\n' "$LBL_LANG_CUR" "$UI_LANG"
+  echo
+  echo "  1) Русский (UTF-8)"
+  echo "  2) English (ASCII)"
+  echo "  0) $LBL_00"
+  echo
+  ask "[1/2/0]: "
+  read -r ans
+  case "$ans" in
+    1|ru|RU)
+      ui_apply_lang "ru"
+      mkdir -p /opt/etc 2>/dev/null || true
+      echo "ru" > "$UI_LANG_FILE" 2>/dev/null || true
+      info "$LBL_LANG_SAVED: ru"
+      ;;
+    2|en|EN)
+      ui_apply_lang "en"
+      mkdir -p /opt/etc 2>/dev/null || true
+      echo "en" > "$UI_LANG_FILE" 2>/dev/null || true
+      info "$LBL_LANG_SAVED: en"
+      ;;
+    0|"")
+      return 0
+      ;;
+    *)
+      warn "Invalid choice"
+      return 0
+      ;;
+  esac
+  # сразу перерисовать главное меню без лишнего Enter
+  return 0
+}
+
 info()  { printf '%s\n' "${GREEN}[+]${NC} $*"; }
 warn()  { printf '%s\n' "${YELLOW}[!]${NC} $*"; }
 error() { printf '%s\n' "${RED}[x]${NC} $*"; }
@@ -47,7 +178,7 @@ ARCH_RAW=""
 detect_arch() {
   # кэш: не дергать opkg на каждом redraw меню
   if [ -n "$ARCH" ]; then
-    info "Архитектура: $ARCH ($ARCH_RAW)"
+    info "$LBL_ARCH: $ARCH ($ARCH_RAW)"
     return 0
   fi
   ARCH_RAW=$(opkg print-architecture 2>/dev/null | sort -k3 -nr | awk '$2!="all"{print $2;exit}')
@@ -58,11 +189,11 @@ detect_arch() {
     x86_64*|amd64) ARCH="x86_64"  ;;
     x86*)          ARCH="x86"     ;;
     *)
-      error "Неизвестная архитектура: $ARCH_RAW"
+      error "Unknown arch: $ARCH_RAW"
       exit 1
       ;;
   esac
-  info "Архитектура: $ARCH ($ARCH_RAW)"
+  info "$LBL_ARCH: $ARCH ($ARCH_RAW)"
 }
 
 # ---------------------------------------------------------------------------
@@ -156,7 +287,7 @@ print_pkg_info() {
     [ -z "$ver" ] && ver="?"
     status=$(service_status "$kind")
     case "$status" in
-      запущен*) mark=" ⚡" ;;
+      запущен*) mark="$RUN_MARK" ;;
     esac
     printf '  %s%-22s%s %s%s\n' "$GREEN" "$name" "$NC" "$ver" "$mark"
     return 0
@@ -177,7 +308,7 @@ show_installed() {
   refresh_proc_cache
 
   echo
-  printf '%s\n' "${BOLD}Установленные компоненты:${NC}"
+  printf '%s\n' "${BOLD}${LBL_INSTALLED}${NC}"
 
   print_pkg_info "nfqws-keenetic"     "nfqws"  && shown=1
   print_pkg_info "nfqws2-keenetic"    "nfqws2" && shown=1
@@ -195,14 +326,14 @@ show_installed() {
     if [ -n "$dpi_ver" ]; then
       print_tool_info "dpi-detector" "$dpi_ver"
     else
-      print_tool_info "dpi-detector" "установлен"
+      print_tool_info "dpi-detector" "ok"
     fi
     shown=1
   fi
 
   if is_installed "awg-manager" || [ -d /opt/etc/awg-manager ]; then
     local awg_name="awg-manager"
-    local awg_info="установлен"
+    local awg_info="ok"
     # наличие sing-box — метка в имени, без запуска бинарника
     if [ -x /opt/etc/awg-manager/singbox/sing-box ] || [ -f /opt/etc/awg-manager/singbox/sing-box ]; then
       awg_name="awg-manager [+SB]"
@@ -223,7 +354,7 @@ show_installed() {
     if [ -n "$kk_ver" ]; then
       print_tool_info "KeenKit" "$kk_ver"
     else
-      print_tool_info "KeenKit" "установлен"
+      print_tool_info "KeenKit" "ok"
     fi
     shown=1
   fi
@@ -231,7 +362,7 @@ show_installed() {
   # Прочие сервисы с init-скриптами в /opt/etc/init.d/
   # (не дублируем уже показанные nfqws / nfqws2 / lighttpd)
   if [ -d /opt/etc/init.d ]; then
-    local f base svc st ver
+    local f base svc ver
     for f in /opt/etc/init.d/S[0-9][0-9]*; do
       [ -f "$f" ] || continue
       [ -x "$f" ] || continue
@@ -254,9 +385,9 @@ show_installed() {
       ver=$(pkg_version "$svc")
       if proc_running "$svc"; then
         if [ -n "$ver" ]; then
-          printf '  %s%-22s%s %s ⚡\n' "$GREEN" "$svc" "$NC" "$ver"
+          printf '  %s%-22s%s %s%s\n' "$GREEN" "$svc" "$NC" "$ver" "$RUN_MARK"
         else
-          printf '  %s%-22s%s ⚡\n' "$GREEN" "$svc" "$NC"
+          printf '  %s%-22s%s%s\n' "$GREEN" "$svc" "$NC" "$RUN_MARK"
         fi
       else
         if [ -n "$ver" ]; then
@@ -270,7 +401,7 @@ show_installed() {
   fi
 
   if [ "$shown" -eq 0 ]; then
-    printf '  %s— ничего не установлено —%s\n' "$DIM" "$NC"
+    printf '  %s%s%s\n' "$DIM" "$LBL_NONE" "$NC"
   fi
   echo
 }
@@ -2161,28 +2292,29 @@ main_menu() {
     echo
     detect_arch
     show_installed
-    printf '%s\n' "${CYAN}${BOLD}[::]  КОМПОНЕНТЫ${NC}"
-    echo "      1.  Установить NFQWS/NFQWS2"
-    echo "      2.  Установить веб-интерфейс"
+    printf '%s\n' "${CYAN}${BOLD}[::]  ${LBL_COMPONENTS}${NC}"
+    echo "      1.  $LBL_1"
+    echo "      2.  $LBL_2"
     echo
-    printf '%s\n' "${CYAN}${BOLD}[::]  СТРАТЕГИИ/СПИСКИ${NC}"
-    echo "      3.  Выбор стратегии"
-    echo "      4.  Обновить IPSet List"
-    echo "      5.  Обход блокировки DoT/DoH"
-    echo "      6.  Управление DoT/DoH"
+    printf '%s\n' "${CYAN}${BOLD}[::]  ${LBL_STRATEGIES}${NC}"
+    echo "      3.  $LBL_3"
+    echo "      4.  $LBL_4"
+    echo "      5.  $LBL_5"
+    echo "      6.  $LBL_6"
     echo
-    printf '%s\n' "${CYAN}${BOLD}[::]  УТИЛИТЫ${NC}"
+    printf '%s\n' "${CYAN}${BOLD}[::]  ${LBL_UTILS}${NC}"
     echo "      10. dpi-detector"
     echo "      11. awg-manager"
     echo "      12. KeenKit"
     echo
-    printf '%s\n' "${CYAN}${BOLD}[::]  УДАЛЕНИЕ${NC}"
-    echo "      88. Удаление пакетов"
+    printf '%s\n' "${CYAN}${BOLD}[::]  ${LBL_REMOVE}${NC}"
+    echo "      77. $LBL_77"
+    echo "      88. $LBL_88"
     echo
-    echo "      99. Обновить скрипт"
-    echo "      00. Выход"
+    echo "      99. $LBL_99"
+    echo "      00. $LBL_00"
     echo
-    ask "Выберите пункт [Enter = выход]: "
+    ask "$LBL_PROMPT"
     read -r choice
 
     case "$choice" in
@@ -2195,17 +2327,18 @@ main_menu() {
       10)  menu_dpi_detector ;;
       11)  menu_awg_manager ;;
       12)  menu_keenkit ;;
+      77)  menu_change_language; continue ;;
       88)  menu_remove ;;
       99)  update_self ;;
       00|0|"")
-        info "Выход."
+        info "$LBL_00."
         exit 0
         ;;
-      *)  warn "Неверный пункт меню" ;;
+      *)  warn "Invalid menu item" ;;
     esac
 
     echo
-    ask "Нажмите Enter для возврата в меню..."
+    ask "$LBL_BACK"
     read -r _
   done
 }
