@@ -31,12 +31,10 @@
 
 ```bash
 # Скачать и запустить
-wget -O /opt/nfqws-menu.sh https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/nfqws-menu.sh
-chmod +x /opt/nfqws-menu.sh
-sh /opt/nfqws-menu.sh
+opkg update && opkg install curl && curl -sSL https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/nfqws-menu.sh -o /opt/nfqws-menu.sh && sh /opt/nfqws-menu.sh
 ```
 
-или одной строкой:
+или:
 
 ```bash
 wget -O /opt/nfqws-menu.sh https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/nfqws-menu.sh && chmod +x /opt/nfqws-menu.sh && sh /opt/nfqws-menu.sh
