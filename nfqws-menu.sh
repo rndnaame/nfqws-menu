@@ -10,7 +10,7 @@
 
 set -e
 
-SCRIPT_VERSION="0.5.9"
+SCRIPT_VERSION="0.5.10"
 
 REPO_URL="https://github.com/rndnaame/nfqws-menu"
 RAW_BASE="https://raw.githubusercontent.com/rndnaame/nfqws-menu/main"
@@ -129,38 +129,14 @@ ui_apply_lang() {
 ui_apply_lang "$(ui_detect_default_lang)"
 
 menu_change_language() {
-  echo
-  printf '%s\n' "${BOLD}${LBL_LANG_TITLE}${NC}"
-  printf '  %s: %s\n' "$LBL_LANG_CUR" "$UI_LANG"
-  echo
-  echo "  1) Русский (UTF-8)"
-  echo "  2) English (ASCII)"
-  echo "  0) $LBL_00"
-  echo
-  ask "[1/2/0]: "
-  read -r ans
-  case "$ans" in
-    1|ru|RU)
-      ui_apply_lang "ru"
-      mkdir -p /opt/etc 2>/dev/null || true
-      echo "ru" > "$UI_LANG_FILE" 2>/dev/null || true
-      info "$LBL_LANG_SAVED: ru"
-      ;;
-    2|en|EN)
-      ui_apply_lang "en"
-      mkdir -p /opt/etc 2>/dev/null || true
-      echo "en" > "$UI_LANG_FILE" 2>/dev/null || true
-      info "$LBL_LANG_SAVED: en"
-      ;;
-    0|"")
-      return 0
-      ;;
-    *)
-      warn "Invalid choice"
-      return 0
-      ;;
-  esac
-  # сразу перерисовать главное меню без лишнего Enter
+  # мгновенное переключение ru <-> en без запросов
+  if [ "$UI_LANG" = "ru" ]; then
+    ui_apply_lang "en"
+  else
+    ui_apply_lang "ru"
+  fi
+  mkdir -p /opt/etc 2>/dev/null || true
+  echo "$UI_LANG" > "$UI_LANG_FILE" 2>/dev/null || true
   return 0
 }
 
