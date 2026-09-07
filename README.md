@@ -4,7 +4,7 @@
 
 Репозиторий также служит хранилищем готовых **стратегий** обхода DPI, **blobs** и **lists**.
 
-- Скрипт: [`nfqws-menu.sh`](nfqws-menu.sh)
+- Скрипт: [`nfqws-menu.sh`](nfqws-menu.sh) (текущая версия **0.5.6**)
 - Стратегии: [`strategies/`](strategies/)
 
 ### Официальные проекты
@@ -56,10 +56,12 @@ menu
 
 При запуске скрипт:
 
-1. Определяет архитектуру процессора (`aarch64` / `mipsel` / `mips` …).
-2. Показывает установленные пакеты, версии и **реальный статус**:
-   - `nfqws-keenetic` / `nfqws2-keenetic` — по init-скрипту и процессу;
-   - `nfqws-keenetic-web` — по **порту 90** (`запущен (:90)` / `остановлен`).
+1. Определяет архитектуру процессора (`aarch64` / `mipsel` / `mips` …) — с кэшированием.
+2. Показывает **только установленные** компоненты (версии и статус):
+   - пакеты NFQWS / web;
+   - dpi-detector, awg-manager (`[+SB]` при наличии sing-box), KeenKit;
+   - другие сервисы из `/opt/etc/init.d/`;
+   - **⚡** — сервис запущен.
 3. Предлагает меню:
 
 ```
@@ -83,6 +85,17 @@ menu
 
       99. Обновить скрипт
       00. Выход
+```
+
+Пример блока статуса:
+
+```
+Установленные компоненты:
+  nfqws2-keenetic        1.2.6 ⚡
+  nfqws-keenetic-web     3.0.23 ⚡
+  dpi-detector           5.0.0-alpha.6
+  awg-manager [+SB]      2.18.0
+  KeenKit                2.8.7
 ```
 
 ### 1. Установка NFQWS / NFQWS2
@@ -205,21 +218,16 @@ https://raw.githubusercontent.com/Flowseal/zapret-discord-youtube/refs/heads/mai
 > Требуется наличие `ndmc` (штатный CLI Keenetic/Netcraze).  
 > При активном **Интернет-фильтре** часть DoT-серверов может добавляться в конфиг, но помечаться как *disregarded*.
 
-### 10. dpi-detector (rust)
+### 10. dpi-detector
 
-Устанавливает актуальную версию [dpi-detector](https://github.com/Runnin4ik/dpi-detector) (ветка `rust`, для Entware/роутеров):
+Устанавливает актуальную версию [dpi-detector](https://github.com/Runnin4ik/dpi-detector) (ветка `rust`):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Runnin4ik/dpi-detector/rust/install.sh | sh
 ```
 
-или через `wget`:
-
-```bash
-wget -qO- https://raw.githubusercontent.com/Runnin4ik/dpi-detector/rust/install.sh | sh
-```
-
-Установщик сам подбирает бинарник под архитектуру и ставит последнюю доступную версию (на момент обновления README — `v5.0.0-alpha.6`).
+Если бинарник уже есть (`/opt/bin/dpi-detector`) — сразу запускает его.  
+Версия в статусе меню берётся из `dpi-detector --version`.
 
 ### 11. awg-manager
 
@@ -229,13 +237,19 @@ wget -qO- https://raw.githubusercontent.com/Runnin4ik/dpi-detector/rust/install.
 curl -sL https://raw.githubusercontent.com/rndnaame/awg-compressed/main/install-compressed.sh | sh
 ```
 
+В статусе: `awg-manager` или `awg-manager [+SB]`, если есть  
+`/opt/etc/awg-manager/singbox/sing-box`.
+
 ### 12. KeenKit
 
-Запускает установщик [KeenKit](https://github.com/spatiumstas/KeenKit):
+- Если есть `/opt/keenkit.sh` — **сразу запускает** его (без установки).
+- Иначе запускает установщик [KeenKit](https://github.com/spatiumstas/KeenKit):
 
 ```bash
 curl -L -s "https://raw.githubusercontent.com/spatiumstas/KeenKit/main/install.sh" > /tmp/install.sh && sh /tmp/install.sh
 ```
+
+Версия в статусе — из `SCRIPT_VERSION` в `/opt/keenkit.sh`.
 
 ### 88. Удаление пакетов
 
@@ -246,13 +260,15 @@ curl -L -s "https://raw.githubusercontent.com/spatiumstas/KeenKit/main/install.s
   1) nfqws2-keenetic
   2) nfqws-keenetic-web
   3) dpi-detector
+  4) awg-manager
   a) Удалить все пакеты NFQWS
   b) Удалить резервные копии (.bak.* / *-opkg)
   0) Назад
 ```
 
 - Пакеты NFQWS — через `opkg remove --autoremove`
-- **dpi-detector** — удаление бинарника (`/opt/bin/dpi-detector` и др.)
+- **dpi-detector** — бинарник (`/opt/bin/dpi-detector` и др.)
+- **awg-manager** — `opkg remove awg-manager` и `rm -rf /opt/etc/awg-manager`
 - **a)** — все пакеты NFQWS + dpi-detector
 - **b)** — резервные копии `*.bak.*`, `*.conf-opkg`, `*.list-opkg`  
   в `/opt/etc/nfqws/`, `/opt/etc/nfqws2/`, `/opt/etc/nfqws2/lists/`
@@ -266,8 +282,21 @@ https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/nfqws-menu.sh
 ```
 
 - Перезаписывает текущий файл **без backup**
+- Обновляет symlink `/opt/bin/menu`
 - Сразу перезапускает меню (`exec`)
-- Рекомендуемый путь установки: `/opt/nfqws-menu.sh`
+- Рекомендуемый путь: `/opt/nfqws-menu.sh`
+
+---
+
+## Changelog 0.4.0 → 0.5.6
+
+- **Управление DoT/DoH** (п. 6) — просмотр, добавление, привязка доменов и удаление через `ndmc`
+- Исправления DNS-меню: удаление DoT, корректный разбор списка серверов
+- Быстрый запуск: `menu` → `/opt/bin/menu`
+- Утилиты: **awg-manager** (11), **KeenKit** (12); удаление — п. **88** (в т.ч. awg-manager)
+- Блок статуса: только установленное; dpi-detector, awg-manager `[+SB]`, KeenKit, сервисы `init.d`
+- Компактный вид: версия без префикса, **⚡** для запущенных
+- Ускорение отрисовки (кэш opkg / процессов / архитектуры)
 
 ---
 
@@ -343,6 +372,9 @@ route | grep ^default
 
 # DNS-proxy (DoT/DoH)
 ndmc -c show dns-proxy
+
+# Быстрый запуск меню
+menu
 ```
 
 ---
