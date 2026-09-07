@@ -10,7 +10,7 @@
 
 set -e
 
-SCRIPT_VERSION="0.4.7"
+SCRIPT_VERSION="0.5.6"
 
 REPO_URL="https://github.com/rndnaame/nfqws-menu"
 RAW_BASE="https://raw.githubusercontent.com/rndnaame/nfqws-menu/main"
@@ -41,87 +41,102 @@ ask()   { printf '%s' "${CYAN}[?]${NC} $*"; }
 # ---------------------------------------------------------------------------
 # Определение архитектуры
 # ---------------------------------------------------------------------------
+ARCH=""
+ARCH_RAW=""
+
 detect_arch() {
-  A=$(opkg print-architecture 2>/dev/null | sort -k3 -nr | awk '$2!="all"{print $2;exit}')
-  case "$A" in
+  # кэш: не дергать opkg на каждом redraw меню
+  if [ -n "$ARCH" ]; then
+    info "Архитектура: $ARCH ($ARCH_RAW)"
+    return 0
+  fi
+  ARCH_RAW=$(opkg print-architecture 2>/dev/null | sort -k3 -nr | awk '$2!="all"{print $2;exit}')
+  case "$ARCH_RAW" in
     aarch64*|arm*) ARCH="aarch64" ;;
     mipsel*)       ARCH="mipsel"  ;;
     mips*)         ARCH="mips"    ;;
     x86_64*|amd64) ARCH="x86_64"  ;;
     x86*)          ARCH="x86"     ;;
     *)
-      error "Неизвестная архитектура: $A"
+      error "Неизвестная архитектура: $ARCH_RAW"
       exit 1
       ;;
   esac
-  info "Архитектура: $ARCH ($A)"
+  info "Архитектура: $ARCH ($ARCH_RAW)"
 }
 
 # ---------------------------------------------------------------------------
 # Проверка установленных пакетов
 # ---------------------------------------------------------------------------
+# Кэши на одну отрисовку меню
+OPKG_INSTALLED_CACHE=""
+PROC_CACHE=""
+PORT90_CACHE=""
+
+refresh_opkg_cache() {
+  OPKG_INSTALLED_CACHE=$(opkg list-installed 2>/dev/null)
+}
+
+# Один снимок процессов на всю отрисовку (вместо кучи pidof/pgrep)
+refresh_proc_cache() {
+  PROC_CACHE=$(ps w 2>/dev/null || ps 2>/dev/null || true)
+}
+
 is_installed() {
-  opkg list-installed 2>/dev/null | grep -q "^$1 "
+  [ -n "$OPKG_INSTALLED_CACHE" ] || refresh_opkg_cache
+  printf '%s\n' "$OPKG_INSTALLED_CACHE" | grep -q "^$1 "
 }
 
 pkg_version() {
-  opkg info "$1" 2>/dev/null | awk -F': ' '/^Version:/{print $2; exit}'
+  # формат list-installed: "name - version" → только version
+  [ -n "$OPKG_INSTALLED_CACHE" ] || refresh_opkg_cache
+  printf '%s\n' "$OPKG_INSTALLED_CACHE" | grep "^$1 - " | head -1 | sed "s/^$1 - //"
 }
 
-# Проверка, слушает ли кто-то порт (для веб-интерфейса :90)
+# Быстрая проверка порта (без nc)
 port_is_open() {
   local port="$1"
-  # netstat (busybox) или ss
+  if [ "$port" = "90" ] && [ -n "$PORT90_CACHE" ]; then
+    [ "$PORT90_CACHE" = "1" ]
+    return $?
+  fi
+  local ok=1
   if command -v netstat >/dev/null 2>&1; then
-    netstat -lnt 2>/dev/null | grep -qE "[.:]${port}[[:space:]]"
-    return $?
+    netstat -lnt 2>/dev/null | grep -qE "[.:]${port}[[:space:]]" && ok=0
+  elif command -v ss >/dev/null 2>&1; then
+    ss -lnt 2>/dev/null | grep -qE "[.:]${port}[[:space:]]" && ok=0
+  elif [ -r /proc/net/tcp ]; then
+    local hex
+    hex=$(printf '%04X' "$port")
+    grep -q ":${hex} " /proc/net/tcp 2>/dev/null && ok=0
   fi
-  if command -v ss >/dev/null 2>&1; then
-    ss -lnt 2>/dev/null | grep -qE "[.:]${port}[[:space:]]"
-    return $?
+  if [ "$port" = "90" ]; then
+    if [ "$ok" -eq 0 ]; then PORT90_CACHE=1; else PORT90_CACHE=0; fi
   fi
-  # fallback: попытка подключиться к localhost
-  if command -v nc >/dev/null 2>&1; then
-    nc -z 127.0.0.1 "$port" >/dev/null 2>&1
-    return $?
-  fi
-  return 1
+  return "$ok"
+}
+
+# Проверка процесса по кэшу ps (подстрока имени)
+proc_running() {
+  local name="$1"
+  [ -n "$PROC_CACHE" ] || refresh_proc_cache
+  printf '%s\n' "$PROC_CACHE" | grep -q "$name"
 }
 
 service_status() {
   # $1 = тип: nfqws | nfqws2 | web
   case "$1" in
     nfqws)
-      if [ -x /opt/etc/init.d/S51nfqws ] && /opt/etc/init.d/S51nfqws status 2>/dev/null | grep -qiE 'running|started|is running'; then
-        echo "запущен"
-      elif pgrep -f '/opt/usr/bin/nfqws ' >/dev/null 2>&1; then
-        echo "запущен"
-      else
-        echo "остановлен"
-      fi
+      if proc_running nfqws; then echo "запущен"; else echo "остановлен"; fi
       ;;
     nfqws2)
-      if [ -x /opt/etc/init.d/S51nfqws2 ] && /opt/etc/init.d/S51nfqws2 status 2>/dev/null | grep -qiE 'running|started|is running'; then
-        echo "запущен"
-      elif pgrep -f '/opt/usr/bin/nfqws2' >/dev/null 2>&1; then
-        echo "запущен"
-      else
-        echo "остановлен"
-      fi
+      if proc_running nfqws2; then echo "запущен"; else echo "остановлен"; fi
       ;;
     web)
-      # nfqws-keenetic-web = lighttpd на порту 90
       if port_is_open 90; then
         echo "запущен (:90)"
-      elif pgrep -f 'lighttpd.*nfqws|nfqws.*lighttpd|/opt/etc/lighttpd' >/dev/null 2>&1; then
+      elif proc_running lighttpd; then
         echo "запущен"
-      elif [ -x /opt/etc/init.d/S80lighttpd ] && /opt/etc/init.d/S80lighttpd status 2>/dev/null | grep -qiE 'running|started'; then
-        # если lighttpd общий — всё равно проверяем порт
-        if port_is_open 90; then
-          echo "запущен (:90)"
-        else
-          echo "остановлен"
-        fi
       else
         echo "остановлен"
       fi
@@ -136,21 +151,127 @@ print_pkg_info() {
   local name="$1"
   local kind="$2"
   if is_installed "$name"; then
-    local ver status
+    local ver status mark=""
     ver=$(pkg_version "$name")
+    [ -z "$ver" ] && ver="?"
     status=$(service_status "$kind")
-    printf '  %s%-22s%s версия: %-12s статус: %s\n' "$GREEN" "$name" "$NC" "$ver" "$status"
-  else
-    printf '  %s%-22s%s не установлен\n' "$YELLOW" "$name" "$NC"
+    case "$status" in
+      запущен*) mark=" ⚡" ;;
+    esac
+    printf '  %s%-22s%s %s%s\n' "$GREEN" "$name" "$NC" "$ver" "$mark"
+    return 0
   fi
+  return 1
+}
+
+print_tool_info() {
+  # $1 = отображаемое имя, $2 = доп.инфо (версия/путь/статус)
+  printf '  %s%-22s%s %s\n' "$GREEN" "$1" "$NC" "$2"
 }
 
 show_installed() {
+  local shown=0
+  # снимки на всю отрисовку: opkg + ps (без повторных вызовов)
+  PORT90_CACHE=""
+  refresh_opkg_cache
+  refresh_proc_cache
+
   echo
   printf '%s\n' "${BOLD}Установленные компоненты:${NC}"
-  print_pkg_info "nfqws-keenetic"     "nfqws"
-  print_pkg_info "nfqws2-keenetic"    "nfqws2"
-  print_pkg_info "nfqws-keenetic-web" "web"
+
+  print_pkg_info "nfqws-keenetic"     "nfqws"  && shown=1
+  print_pkg_info "nfqws2-keenetic"    "nfqws2" && shown=1
+  print_pkg_info "nfqws-keenetic-web" "web"    && shown=1
+
+  if [ -x /opt/bin/dpi-detector ] || command -v dpi-detector >/dev/null 2>&1; then
+    local dpi_bin="" dpi_ver=""
+    if [ -x /opt/bin/dpi-detector ]; then
+      dpi_bin="/opt/bin/dpi-detector"
+    else
+      dpi_bin=$(command -v dpi-detector)
+    fi
+    # --version обычно быстрый; один вызов
+    dpi_ver=$("$dpi_bin" --version 2>/dev/null | head -1 | sed -n 's/.*dpi-detector[[:space:]]\+\([^[:space:]]*\).*/\1/p')
+    if [ -n "$dpi_ver" ]; then
+      print_tool_info "dpi-detector" "$dpi_ver"
+    else
+      print_tool_info "dpi-detector" "установлен"
+    fi
+    shown=1
+  fi
+
+  if is_installed "awg-manager" || [ -d /opt/etc/awg-manager ]; then
+    local awg_name="awg-manager"
+    local awg_info="установлен"
+    # наличие sing-box — метка в имени, без запуска бинарника
+    if [ -x /opt/etc/awg-manager/singbox/sing-box ] || [ -f /opt/etc/awg-manager/singbox/sing-box ]; then
+      awg_name="awg-manager [+SB]"
+    fi
+    if is_installed "awg-manager"; then
+      local av
+      av=$(pkg_version awg-manager)
+      [ -n "$av" ] && awg_info="$av"
+    fi
+    print_tool_info "$awg_name" "$awg_info"
+    shown=1
+  fi
+
+  if [ -f /opt/keenkit.sh ]; then
+    local kk_ver=""
+    kk_ver=$(grep -E '^SCRIPT_VERSION=' /opt/keenkit.sh 2>/dev/null | head -1 | sed -n 's/^SCRIPT_VERSION="\([^"]*\)".*/\1/p')
+    [ -z "$kk_ver" ] && kk_ver=$(grep -E "^SCRIPT_VERSION='" /opt/keenkit.sh 2>/dev/null | head -1 | sed -n "s/^SCRIPT_VERSION='\\([^']*\\)'.*/\\1/p")
+    if [ -n "$kk_ver" ]; then
+      print_tool_info "KeenKit" "$kk_ver"
+    else
+      print_tool_info "KeenKit" "установлен"
+    fi
+    shown=1
+  fi
+
+  # Прочие сервисы с init-скриптами в /opt/etc/init.d/
+  # (не дублируем уже показанные nfqws / nfqws2 / lighttpd)
+  if [ -d /opt/etc/init.d ]; then
+    local f base svc st ver
+    for f in /opt/etc/init.d/S[0-9][0-9]*; do
+      [ -f "$f" ] || continue
+      [ -x "$f" ] || continue
+      base=$(basename "$f")
+      # S51nfqws -> nfqws, S99awg-manager -> awg-manager
+      svc=$(echo "$base" | sed 's/^S[0-9][0-9]//')
+      [ -n "$svc" ] || continue
+      case "$svc" in
+        nfqws|nfqws2|lighttpd)
+          continue
+          ;;
+      esac
+      # awg-manager уже выведен отдельной строкой выше
+      if [ "$svc" = "awg-manager" ]; then
+        if is_installed "awg-manager" || [ -d /opt/etc/awg-manager ]; then
+          continue
+        fi
+      fi
+
+      ver=$(pkg_version "$svc")
+      if proc_running "$svc"; then
+        if [ -n "$ver" ]; then
+          printf '  %s%-22s%s %s ⚡\n' "$GREEN" "$svc" "$NC" "$ver"
+        else
+          printf '  %s%-22s%s ⚡\n' "$GREEN" "$svc" "$NC"
+        fi
+      else
+        if [ -n "$ver" ]; then
+          printf '  %s%-22s%s %s\n' "$GREEN" "$svc" "$NC" "$ver"
+        else
+          printf '  %s%-22s%s\n' "$GREEN" "$svc" "$NC"
+        fi
+      fi
+      shown=1
+    done
+  fi
+
+  if [ "$shown" -eq 0 ]; then
+    printf '  %s— ничего не установлено —%s\n' "$DIM" "$NC"
+  fi
   echo
 }
 
