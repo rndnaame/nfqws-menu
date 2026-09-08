@@ -1399,8 +1399,9 @@ add_dot_menu() {
   echo "25) Comss DNS (dns.comss.one)"
   echo "26) Malw Link (dns.malw.link)"
   echo "27) Cloudflare Gateway (5u35p8m9i7.cloudflare-gateway.com)"
+  echo "28) Geo Hide (geohide.ru)"
   printf '%s\n' " ${YELLOW}--- Свой вариант ---${NC}"
-  echo "28) Ввести вручную (IP / Port / SNI)"
+  echo "29) Ввести вручную (IP / Port / SNI)"
   echo " 0) Отмена"
   printf '%s\n' "${DIM}────────────────────────────────────────────────────────${NC}"
   ask "Выберите варианты: "
@@ -1442,7 +1443,8 @@ add_dot_menu() {
       25) apply_dot "dns.comss.one" "dns.comss.one" "$domain"; added_any=1 ;;
       26) apply_dot "dns.malw.link" "dns.malw.link" "$domain"; added_any=1 ;;
       27) apply_dot "5u35p8m9i7.cloudflare-gateway.com" "5u35p8m9i7.cloudflare-gateway.com" "$domain"; added_any=1 ;;
-      28)
+      28) apply_dot "geohide.ru" "geohide.ru" "$domain"; added_any=1 ;;
+      29) 
         ask "Введите IP/Хост: "
         read -r manual_ip
         ask "Введите Порт (по умолчанию 853, отмена - Enter): "
@@ -1487,6 +1489,7 @@ add_doh_menu() {
   echo "17) Comss DNS Keenetic/MikroTik (https://dns.comss.one/dns-query)"
   echo "18) Malw Link (https://dns.malw.link/dns-query)"
   echo "19) Cloudflare Gateway (https://5u35p8m9i7.cloudflare-gateway.com/dns-query)"
+  echo "20) Geo Hide (https://dns.geohide.ru/dns-query)"
   printf '%s\n' " ${YELLOW}--- Свой вариант ---${NC}"
   echo "20) Ввести вручную (произвольный URI)"
   echo " 0) Отмена"
@@ -1522,7 +1525,8 @@ add_doh_menu() {
       17) apply_doh "https://dns.comss.one/dns-query" "$domain"; added_any=1 ;;
       18) apply_doh "https://dns.malw.link/dns-query" "$domain"; added_any=1 ;;
       19) apply_doh "https://5u35p8m9i7.cloudflare-gateway.com/dns-query" "$domain"; added_any=1 ;;
-      20)
+      20) apply_doh "https://dns.geohide.ru/dns-query" "$domain"; added_any=1 ;;
+      21)
         ask "Введите URI DoH сервера: "
         read -r manual_uri
         if [ -n "$manual_uri" ]; then
