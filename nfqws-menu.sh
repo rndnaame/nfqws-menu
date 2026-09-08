@@ -10,7 +10,7 @@
 
 set -e
 
-SCRIPT_VERSION="0.5.10"
+SCRIPT_VERSION="0.5.11"
 
 REPO_URL="https://github.com/rndnaame/nfqws-menu"
 RAW_BASE="https://raw.githubusercontent.com/rndnaame/nfqws-menu/main"
@@ -2019,6 +2019,53 @@ menu_keenkit() {
 }
 
 # ---------------------------------------------------------------------------
+# 13. TG WS Proxy Go
+# ---------------------------------------------------------------------------
+menu_tg_ws_proxy() {
+  echo
+  info "TG WS Proxy Go (tg-ws-proxy)"
+
+  if is_installed "tg-ws-proxy"; then
+    info "Пакет уже установлен — обновление..."
+    opkg update
+    opkg upgrade tg-ws-proxy
+    info "Обновление завершено."
+  else
+    info "Пакет не установлен — установка..."
+    if command -v curl >/dev/null 2>&1; then
+      curl -fsSL https://raw.githubusercontent.com/spatiumstas/feedly/main/add-repo.sh | sh
+    elif command -v wget >/dev/null 2>&1; then
+      wget -qO- https://raw.githubusercontent.com/spatiumstas/feedly/main/add-repo.sh | sh
+    else
+      error "Нужны curl или wget."
+      return 1
+    fi
+    opkg install tg-ws-proxy
+    info "Установка завершена."
+  fi
+
+  echo
+  printf '%s\n' "${BOLD}Дополнительная информация:${NC}"
+  cat << 'EOF'
+# Entware (KeeneticOS):
+#   /opt/etc/tg-ws-proxy/config.conf
+#   /opt/etc/tg-ws-proxy/secret.conf
+https://github.com/spatiumstas/tg-ws-proxy-go
+
+SECRET должен быть строкой из 32 hex-символов. Если оставить пустым, он будет автоматически сгенерирован при запуске.
+DC_IP_DEFAULT и DC_IP_DEFAULT_POOL — глобальные значения по умолчанию для DC (2,4).
+EXTRA_ARGS используется для переопределений по DC и дополнительных флагов, см. CFProxy.
+Полный список доступных команд: --help.
+FAKE_TLS_DOMAIN включает режим Fake TLS (ee secret link). Оставьте пустым для стандартного режима dd.
+CFPROXY_DOMAINS — локальный список fallback-доменов.
+CFPROXY_DOMAINS_URL — значение по умолчанию/зеркало
+
+# Entware (KeeneticOS)
+/opt/etc/init.d/S99tg-ws-proxy (start / stop / status / restart)
+EOF
+}
+
+# ---------------------------------------------------------------------------
 # 88. Удаление пакетов
 # ---------------------------------------------------------------------------
 # Удаление резервных копий конфигов/списков (.bak.*, *-opkg)
@@ -2204,6 +2251,7 @@ main_menu() {
     echo "      10. dpi-detector"
     echo "      11. awg-manager"
     echo "      12. KeenKit"
+    echo "      13. TG WS Proxy Go"
     echo
     printf '%s\n' "${CYAN}${BOLD}[::]  ${LBL_REMOVE}${NC}"
     echo "      77. $LBL_77"
@@ -2225,6 +2273,7 @@ main_menu() {
       10)  menu_dpi_detector ;;
       11)  menu_awg_manager ;;
       12)  menu_keenkit ;;
+      13)  menu_tg_ws_proxy ;;
       77)  menu_change_language; continue ;;
       88)  menu_remove ;;
       99)  update_self ;;
