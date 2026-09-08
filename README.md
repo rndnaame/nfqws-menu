@@ -4,7 +4,7 @@
 
 Репозиторий также служит хранилищем готовых **стратегий** обхода DPI, **blobs** и **lists**.
 
-- Скрипт: [`nfqws-menu.sh`](nfqws-menu.sh) (текущая версия **0.5.10**)
+- Скрипт: [`nfqws-menu.sh`](nfqws-menu.sh) (текущая версия **0.5.11**)
 - Стратегии: [`strategies/`](strategies/)
 
 ### Официальные проекты
@@ -31,10 +31,12 @@
 
 ```bash
 # Скачать и запустить
-opkg update && opkg install curl && curl -sSL https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/nfqws-menu.sh -o /opt/nfqws-menu.sh && sh /opt/nfqws-menu.sh
+wget -O /opt/nfqws-menu.sh https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/nfqws-menu.sh
+chmod +x /opt/nfqws-menu.sh
+sh /opt/nfqws-menu.sh
 ```
 
-или:
+или одной строкой:
 
 ```bash
 wget -O /opt/nfqws-menu.sh https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/nfqws-menu.sh && chmod +x /opt/nfqws-menu.sh && sh /opt/nfqws-menu.sh
@@ -77,8 +79,10 @@ menu
       10. dpi-detector
       11. awg-manager
       12. KeenKit
+      13. TG WS Proxy Go
 
-[::]  УДАЛЕНИЕ
+[::]  СЕРВИС
+      77. Change language
       88. Удаление пакетов
 
       99. Обновить скрипт
@@ -100,7 +104,7 @@ menu
 
 - Выбор версии: **nfqws-keenetic** (v1) или **nfqws2-keenetic** (v2).
 - Установка зависимостей (`ca-certificates`, `wget-ssl`, удаление `wget-nossl`).
-- Добавление официального **универсального** opkg-репозитория (`/all`).
+- Добавление официального **универсального** opkg-репозитория.
 - Установка пакета.
 - Предложение установить веб-интерфейс.
 
@@ -249,6 +253,42 @@ curl -L -s "https://raw.githubusercontent.com/spatiumstas/KeenKit/main/install.s
 
 Версия в статусе — из `SCRIPT_VERSION` в `/opt/keenkit.sh`.
 
+### 13. TG WS Proxy Go
+
+Установка / обновление [tg-ws-proxy](https://github.com/spatiumstas/tg-ws-proxy-go) (Telegram WebSocket Proxy).
+
+- Если пакет **уже установлен** → `opkg update && opkg upgrade tg-ws-proxy`
+- Если **не установлен** → добавление репозитория feedly + `opkg install tg-ws-proxy`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/spatiumstas/feedly/main/add-repo.sh | sh
+opkg install tg-ws-proxy
+```
+
+После установки/обновления выводится справочная информация:
+
+```
+# Entware (KeeneticOS):
+#   /opt/etc/tg-ws-proxy/config.conf
+#   /opt/etc/tg-ws-proxy/secret.conf
+https://github.com/spatiumstas/tg-ws-proxy-go
+
+SECRET должен быть строкой из 32 hex-символов. Если оставить пустым, он будет автоматически сгенерирован при запуске.
+DC_IP_DEFAULT и DC_IP_DEFAULT_POOL — глобальные значения по умолчанию для DC (2,4).
+EXTRA_ARGS используется для переопределений по DC и дополнительных флагов, см. CFProxy.
+Полный список доступных команд: --help.
+FAKE_TLS_DOMAIN включает режим Fake TLS (ee secret link). Оставьте пустым для стандартного режима dd.
+CFPROXY_DOMAINS — локальный список fallback-доменов.
+CFPROXY_DOMAINS_URL — значение по умолчанию/зеркало
+
+# Entware (KeeneticOS)
+/opt/etc/init.d/S99tg-ws-proxy (start / stop / status / restart)
+```
+
+### 77. Change language
+
+Мгновенное переключение интерфейса **ru ↔ en** (сохраняется в `/opt/etc/nfqws-menu.lang`).
+
 ### 88. Удаление пакетов
 
 Показывает установленные компоненты и позволяет удалить выборочно:
@@ -286,7 +326,13 @@ https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/nfqws-menu.sh
 
 ---
 
-## Changelog 0.4.0 → 0.5.6
+## Changelog
+
+### 0.5.11
+
+- **TG WS Proxy Go** (п. 13) — установка/обновление `tg-ws-proxy` через репозиторий feedly; вывод справки по конфигам и init-скрипту
+
+### 0.4.0 → 0.5.x
 
 - **Управление DoT/DoH** (п. 6) — просмотр, добавление, привязка доменов и удаление через `ndmc`
 - Исправления DNS-меню: удаление DoT, корректный разбор списка серверов
@@ -295,6 +341,7 @@ https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/nfqws-menu.sh
 - Блок статуса: только установленное; dpi-detector, awg-manager `[+SB]`, KeenKit, сервисы `init.d`
 - Компактный вид: версия без префикса, **⚡** для запущенных
 - Ускорение отрисовки (кэш opkg / процессов / архитектуры)
+- Переключение языка интерфейса (п. 77)
 
 ---
 
@@ -346,6 +393,7 @@ nfqws-menu/
 # Статус сервисов
 /opt/etc/init.d/S51nfqws status          # v1
 /opt/etc/init.d/S51nfqws2 status         # v2
+/opt/etc/init.d/S99tg-ws-proxy status    # TG WS Proxy
 
 # Порт веб-интерфейса
 netstat -lnt | grep ':90'
@@ -353,15 +401,19 @@ netstat -lnt | grep ':90'
 # Перезапуск
 /opt/etc/init.d/S51nfqws restart
 /opt/etc/init.d/S51nfqws2 restart
+/opt/etc/init.d/S99tg-ws-proxy restart
 
 # Информация о пакете
 opkg info nfqws-keenetic
 opkg info nfqws2-keenetic
 opkg info nfqws-keenetic-web
+opkg info tg-ws-proxy
 
 # Конфиги
 vi /opt/etc/nfqws/nfqws.conf             # v1
 vi /opt/etc/nfqws2/nfqws2.conf           # v2
+vi /opt/etc/tg-ws-proxy/config.conf
+vi /opt/etc/tg-ws-proxy/secret.conf
 
 # Интерфейс провайдера
 ip route | grep ^default
