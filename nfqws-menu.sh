@@ -10,7 +10,7 @@
 
 set -e
 
-SCRIPT_VERSION="0.5.15"
+SCRIPT_VERSION="0.5.16"
 
 REPO_URL="https://github.com/rndnaame/nfqws-menu"
 RAW_BASE="https://raw.githubusercontent.com/rndnaame/nfqws-menu/main"
@@ -1239,166 +1239,70 @@ show_dns_servers() {
                                            -v c_yellow="$YELLOW" \
                                            -v c_magenta="$MAGENTA" \
                                            -v c_dim="$DIM" '
-    BEGIN { dot_gen_cnt = 0; doh_gen_cnt = 0; dom_cnt = 0; dot_c = 0; doh_c = 0 }
+    BEGIN {
+      dot_gen_cnt = 0; doh_gen_cnt = 0; dom_cnt = 0; dot_c = 0; doh_c = 0
+      # show dns-proxy выводит System + Policy0/1/... — берём только System
+      # proxy-tls-filters / proxy-https-filters — служебные, не считаем
+      scope = 0
+      in_filters = 0
+    }
 
-    # Строго только заголовки блоков server-tls / server-https (с отступом)
+    /proxy-name:/ {
+      if ($0 ~ /System/) {
+        scope = 1
+      } else if (scope == 1) {
+        scope = 2
+      }
+      next
+    }
+    scope != 1 { next }
+
+    /^[ \t]*proxy-tls-filters:/ || /^[ \t]*proxy-https-filters:/ {
+      if (in_dot && addr != "") commit_dot()
+      if (in_doh && uri != "") commit_doh()
+      in_filters = 1
+      in_dot = 0; in_doh = 0
+      addr = ""; sni = ""; uri = ""; domain = ""; reading_uri = 0
+      next
+    }
+    /^[ \t]*proxy-tls:/ || /^[ \t]*proxy-https:/ {
+      if (in_dot && addr != "") commit_dot()
+      if (in_doh && uri != "") commit_doh()
+      in_filters = 0
+      in_dot = 0; in_doh = 0
+      addr = ""; sni = ""; uri = ""; domain = ""; reading_uri = 0
+      next
+    }
+
     /^[ \t]*server-tls:[ \t]*$/ {
-      if (in_dot && addr != "") {
-        target = (sni != "") ? addr " " sni : addr
-        if (domain == "") {
-          key = "dot|" target
-          if (!(key in seen_gen)) {
-            seen_gen[key] = 1
-            dot_gen[dot_gen_cnt++] = "  " c_cyan "🔒" c_reset " " target
-          }
-        } else {
-          key = "dom|dot|" domain "|" target
-          if (!(key in seen_dom)) {
-            seen_dom[key] = 1
-            dom_list[dom_cnt++] = "  " c_yellow "🌐" c_reset " " sprintf("%-18s", domain) " " c_dim "➔" c_reset " " target " " c_magenta "[DoT]" c_reset
-          }
-        }
-        dot_c++
-      }
+      if (in_filters) next
+      if (in_dot && addr != "") commit_dot()
       in_dot = 1; in_doh = 0; reading_uri = 0
-      addr = ""; sni = ""; domain = ""; port = ""
+      addr = ""; sni = ""; domain = ""
       next
     }
-
     /^[ \t]*server-https:[ \t]*$/ {
-      if (in_dot && addr != "") {
-        target = (sni != "") ? addr " " sni : addr
-        if (domain == "") {
-          key = "dot|" target
-          if (!(key in seen_gen)) {
-            seen_gen[key] = 1
-            dot_gen[dot_gen_cnt++] = "  " c_cyan "🔒" c_reset " " target
-          }
-        } else {
-          key = "dom|dot|" domain "|" target
-          if (!(key in seen_dom)) {
-            seen_dom[key] = 1
-            dom_list[dom_cnt++] = "  " c_yellow "🌐" c_reset " " sprintf("%-18s", domain) " " c_dim "➔" c_reset " " target " " c_magenta "[DoT]" c_reset
-          }
-        }
-        dot_c++
-      }
-      if (in_doh && uri != "") {
-        gsub(/[ \t\r\n]/, "", uri)
-        if (domain == "") {
-          key = "doh|" uri
-          if (!(key in seen_gen)) {
-            seen_gen[key] = 1
-            doh_gen[doh_gen_cnt++] = "  " c_green "⚡" c_reset " " uri
-          }
-        } else {
-          key = "dom|doh|" domain "|" uri
-          if (!(key in seen_dom)) {
-            seen_dom[key] = 1
-            dom_list[dom_cnt++] = "  " c_yellow "🌐" c_reset " " sprintf("%-18s", domain) " " c_dim "➔" c_reset " " uri " " c_cyan "[DoH]" c_reset
-          }
-        }
-        doh_c++
-      }
+      if (in_filters) next
+      if (in_dot && addr != "") commit_dot()
+      if (in_doh && uri != "") commit_doh()
       in_doh = 1; in_dot = 0; reading_uri = 0
-      addr = ""; sni = ""; uri = ""; domain = ""; port = ""
+      addr = ""; sni = ""; uri = ""; domain = ""
       next
     }
 
-    # Выход из секций — закрыть незавершённый блок
-    /^[ \t]*proxy-tls-filters:/ || /^[ \t]*proxy-https:/ || /^[ \t]*proxy-https-filters:/ {
-      if (in_dot && addr != "") {
-        target = (sni != "") ? addr " " sni : addr
-        if (domain == "") {
-          key = "dot|" target
-          if (!(key in seen_gen)) {
-            seen_gen[key] = 1
-            dot_gen[dot_gen_cnt++] = "  " c_cyan "🔒" c_reset " " target
-          }
-        } else {
-          key = "dom|dot|" domain "|" target
-          if (!(key in seen_dom)) {
-            seen_dom[key] = 1
-            dom_list[dom_cnt++] = "  " c_yellow "🌐" c_reset " " sprintf("%-18s", domain) " " c_dim "➔" c_reset " " target " " c_magenta "[DoT]" c_reset
-          }
-        }
-        dot_c++
-        in_dot = 0; addr = ""; sni = ""; domain = ""
-      }
-      if (in_doh && uri != "") {
-        gsub(/[ \t\r\n]/, "", uri)
-        if (domain == "") {
-          key = "doh|" uri
-          if (!(key in seen_gen)) {
-            seen_gen[key] = 1
-            doh_gen[doh_gen_cnt++] = "  " c_green "⚡" c_reset " " uri
-          }
-        } else {
-          key = "dom|doh|" domain "|" uri
-          if (!(key in seen_dom)) {
-            seen_dom[key] = 1
-            dom_list[dom_cnt++] = "  " c_yellow "🌐" c_reset " " sprintf("%-18s", domain) " " c_dim "➔" c_reset " " uri " " c_cyan "[DoH]" c_reset
-          }
-        }
-        doh_c++
-        in_doh = 0; uri = ""; domain = ""; reading_uri = 0
-      }
-      next
-    }
-
-    # Поля только внутри активного блока; $1 должен быть именем поля
     in_dot && $1 ~ /^address:$/ { addr = $2; next }
     in_dot && $1 ~ /^port:$/    { if ($2 != "" && $2 != "853") addr = addr ":" $2; next }
     in_dot && $1 ~ /^sni:$/     { sni = $2; next }
     in_dot && $1 ~ /^domain:$/  { domain = $2; next }
 
     in_doh && $1 ~ /^uri:$/     { reading_uri = 1; uri = $2; next }
-    in_doh && reading_uri && ($1 ~ /^(format|spki|interface|domain):$/) {
-      reading_uri = 0
-      # fall through to domain handler below if needed
-    }
-    in_doh && reading_uri {
-      # продолжение URI на следующей строке (редко)
-      uri = uri $1
-      next
-    }
+    in_doh && reading_uri && ($1 ~ /^(format|spki|interface|domain):$/) { reading_uri = 0 }
+    in_doh && reading_uri { uri = uri $1; next }
     in_doh && $1 ~ /^domain:$/  { domain = $2; reading_uri = 0; next }
 
     END {
-      if (in_dot && addr != "") {
-        target = (sni != "") ? addr " " sni : addr
-        if (domain == "") {
-          key = "dot|" target
-          if (!(key in seen_gen)) {
-            seen_gen[key] = 1
-            dot_gen[dot_gen_cnt++] = "  " c_cyan "🔒" c_reset " " target
-          }
-        } else {
-          key = "dom|dot|" domain "|" target
-          if (!(key in seen_dom)) {
-            seen_dom[key] = 1
-            dom_list[dom_cnt++] = "  " c_yellow "🌐" c_reset " " sprintf("%-18s", domain) " " c_dim "➔" c_reset " " target " " c_magenta "[DoT]" c_reset
-          }
-        }
-        dot_c++
-      }
-      if (in_doh && uri != "") {
-        gsub(/[ \t\r\n]/, "", uri)
-        if (domain == "") {
-          key = "doh|" uri
-          if (!(key in seen_gen)) {
-            seen_gen[key] = 1
-            doh_gen[doh_gen_cnt++] = "  " c_green "⚡" c_reset " " uri
-          }
-        } else {
-          key = "dom|doh|" domain "|" uri
-          if (!(key in seen_dom)) {
-            seen_dom[key] = 1
-            dom_list[dom_cnt++] = "  " c_yellow "🌐" c_reset " " sprintf("%-18s", domain) " " c_dim "➔" c_reset " " uri " " c_cyan "[DoH]" c_reset
-          }
-        }
-        doh_c++
-      }
+      if (in_dot && addr != "") commit_dot()
+      if (in_doh && uri != "") commit_doh()
 
       print c_cyan "┌────────────────────────────────────────────────────────┐" c_reset
       print c_cyan "│" c_bold "          УПРАВЛЕНИЕ DNS СЕРВЕРАМИ KEENETIC             " c_cyan "│" c_reset
@@ -1416,6 +1320,45 @@ show_dns_servers() {
       if (dom_cnt == 0) print "  " c_dim "— привязки отсутствуют —" c_reset
       for (i = 0; i < dom_cnt; i++) print dom_list[i]
       print "\n" c_dim "────────────────────────────────────────────────────────" c_reset
+    }
+
+    function commit_dot() {
+      target = (sni != "") ? addr " " sni : addr
+      if (domain == "") {
+        key = "dot|" target
+        if (!(key in seen_gen)) {
+          seen_gen[key] = 1
+          dot_gen[dot_gen_cnt++] = "  " c_cyan "🔒" c_reset " " target
+        }
+      } else {
+        key = "dom|dot|" domain "|" target
+        if (!(key in seen_dom)) {
+          seen_dom[key] = 1
+          dom_list[dom_cnt++] = "  " c_yellow "🌐" c_reset " " sprintf("%-18s", domain) " " c_dim "➔" c_reset " " target " " c_magenta "[DoT]" c_reset
+        }
+      }
+      dot_c++
+      in_dot = 0; addr = ""; sni = ""; domain = ""
+    }
+
+    function commit_doh() {
+      gsub(/[ \t\r\n]/, "", uri)
+      if (uri == "") return
+      if (domain == "") {
+        key = "doh|" uri
+        if (!(key in seen_gen)) {
+          seen_gen[key] = 1
+          doh_gen[doh_gen_cnt++] = "  " c_green "⚡" c_reset " " uri
+        }
+      } else {
+        key = "dom|doh|" domain "|" uri
+        if (!(key in seen_dom)) {
+          seen_dom[key] = 1
+          dom_list[dom_cnt++] = "  " c_yellow "🌐" c_reset " " sprintf("%-18s", domain) " " c_dim "➔" c_reset " " uri " " c_cyan "[DoH]" c_reset
+        }
+      }
+      doh_c++
+      in_doh = 0; uri = ""; domain = ""; reading_uri = 0
     }
   '
 }
