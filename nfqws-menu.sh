@@ -10,7 +10,7 @@
 
 set -e
 
-SCRIPT_VERSION="0.5.17"
+SCRIPT_VERSION="0.5.18"
 
 REPO_URL="https://github.com/rndnaame/nfqws-menu"
 RAW_BASE="https://raw.githubusercontent.com/rndnaame/nfqws-menu/main"
@@ -241,7 +241,7 @@ proc_running() {
 }
 
 service_status() {
-  # $1 = тип: nfqws | nfqws2 | web
+  # $1 = тип: nfqws | nfqws2 | web | usque | tg-ws-proxy
   case "$1" in
     nfqws)
       if proc_running nfqws; then echo "запущен"; else echo "остановлен"; fi
@@ -257,6 +257,12 @@ service_status() {
       else
         echo "остановлен"
       fi
+      ;;
+    usque)
+      if proc_running usque; then echo "запущен"; else echo "остановлен"; fi
+      ;;
+    tg-ws-proxy)
+      if proc_running tg-ws-proxy; then echo "запущен"; else echo "остановлен"; fi
       ;;
     *)
       echo "неизвестно"
@@ -299,6 +305,8 @@ show_installed() {
   print_pkg_info "nfqws-keenetic"     "nfqws"  && shown=1
   print_pkg_info "nfqws2-keenetic"    "nfqws2" && shown=1
   print_pkg_info "nfqws-keenetic-web" "web"    && shown=1
+  print_pkg_info "usque-keenetic"     "usque"  && shown=1
+  print_pkg_info "tg-ws-proxy"        "tg-ws-proxy" && shown=1
 
   if [ -x /opt/bin/dpi-detector ] || command -v dpi-detector >/dev/null 2>&1; then
     local dpi_bin="" dpi_ver=""
@@ -357,7 +365,7 @@ show_installed() {
       svc=$(echo "$base" | sed 's/^S[0-9][0-9]//')
       [ -n "$svc" ] || continue
       case "$svc" in
-        nfqws|nfqws2|lighttpd)
+        nfqws|nfqws2|lighttpd|usque|tg-ws-proxy)
           continue
           ;;
       esac
