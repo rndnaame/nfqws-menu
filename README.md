@@ -4,7 +4,7 @@
 
 Репозиторий также служит хранилищем готовых **стратегий** обхода DPI, **blobs** и **lists**.
 
-- Скрипт: [`nfqws-menu.sh`](nfqws-menu.sh) (текущая версия **0.5.11**)
+- Скрипт: [`nfqws-menu.sh`](nfqws-menu.sh) (текущая версия **0.5.12**)
 - Стратегии: [`strategies/`](strategies/)
 
 ### Официальные проекты
@@ -299,6 +299,7 @@ CFPROXY_DOMAINS_URL — значение по умолчанию/зеркало
   2) nfqws-keenetic-web
   3) dpi-detector
   4) awg-manager
+  5) tg-ws-proxy
   a) Удалить все пакеты NFQWS
   b) Удалить резервные копии (.bak.* / *-opkg)
   0) Назад
@@ -307,6 +308,7 @@ CFPROXY_DOMAINS_URL — значение по умолчанию/зеркало
 - Пакеты NFQWS — через `opkg remove --autoremove`
 - **dpi-detector** — бинарник (`/opt/bin/dpi-detector` и др.)
 - **awg-manager** — `opkg remove awg-manager` и `rm -rf /opt/etc/awg-manager`
+- **tg-ws-proxy** — `opkg remove tg-ws-proxy` + запрос на удаление репозитория `/opt/etc/opkg/feedly.conf`
 - **a)** — все пакеты NFQWS + dpi-detector
 - **b)** — резервные копии `*.bak.*`, `*.conf-opkg`, `*.list-opkg`  
   в `/opt/etc/nfqws/`, `/opt/etc/nfqws2/`, `/opt/etc/nfqws2/lists/`
@@ -327,6 +329,10 @@ https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/nfqws-menu.sh
 ---
 
 ## Changelog
+
+### 0.5.12
+
+- **Удаление tg-ws-proxy** (п. 88) — `opkg remove tg-ws-proxy` + запрос на удаление `/opt/etc/opkg/feedly.conf`
 
 ### 0.5.11
 

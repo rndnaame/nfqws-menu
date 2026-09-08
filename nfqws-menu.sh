@@ -10,7 +10,7 @@
 
 set -e
 
-SCRIPT_VERSION="0.5.11"
+SCRIPT_VERSION="0.5.12"
 
 REPO_URL="https://github.com/rndnaame/nfqws-menu"
 RAW_BASE="https://raw.githubusercontent.com/rndnaame/nfqws-menu/main"
@@ -2148,6 +2148,27 @@ remove_awg_manager() {
   info "awg-manager удалён."
 }
 
+remove_tg_ws_proxy() {
+  if is_installed "tg-ws-proxy"; then
+    opkg remove tg-ws-proxy 2>/dev/null || opkg remove --autoremove tg-ws-proxy 2>/dev/null || true
+    info "tg-ws-proxy удалён."
+  else
+    warn "tg-ws-proxy не установлен."
+  fi
+
+  if [ -f /opt/etc/opkg/feedly.conf ]; then
+    echo
+    ask "Удалить репозиторий feedly (/opt/etc/opkg/feedly.conf)? [y/N]: "
+    read -r ans
+    case "$ans" in
+      y|Y|д|Д)
+        rm -f /opt/etc/opkg/feedly.conf && info "  удалён: /opt/etc/opkg/feedly.conf"
+        ;;
+      *) info "Репозиторий feedly оставлен." ;;
+    esac
+  fi
+}
+
 menu_remove() {
   echo
   printf '%s\n' "${BOLD}Удаление:${NC}"
@@ -2159,6 +2180,7 @@ menu_remove() {
   is_installed "nfqws-keenetic-web" && items="$items nfqws-keenetic-web" && types="$types opkg"
   is_dpi_detector_installed         && items="$items dpi-detector"      && types="$types bin"
   is_awg_manager_installed          && items="$items awg-manager"       && types="$types opkg"
+  is_installed "tg-ws-proxy"        && items="$items tg-ws-proxy"       && types="$types opkg"
 
   local i=1
   local p
@@ -2214,6 +2236,8 @@ menu_remove() {
             remove_dpi_detector
           elif [ "$target" = "awg-manager" ]; then
             remove_awg_manager
+          elif [ "$target" = "tg-ws-proxy" ]; then
+            remove_tg_ws_proxy
           else
             opkg remove --autoremove "$target"
             info "$target удалён."
