@@ -10,7 +10,7 @@
 
 set -e
 
-SCRIPT_VERSION="0.5.16"
+SCRIPT_VERSION="0.5.17"
 
 REPO_URL="https://github.com/rndnaame/nfqws-menu"
 RAW_BASE="https://raw.githubusercontent.com/rndnaame/nfqws-menu/main"
@@ -2102,6 +2102,48 @@ EOF
 }
 
 # ---------------------------------------------------------------------------
+# 14. usque-keenetic
+# ---------------------------------------------------------------------------
+menu_usque_keenetic() {
+  echo
+  info "usque-keenetic"
+
+  # ARCH нужен для URL репозитория
+  if [ -z "$ARCH" ]; then
+    detect_arch
+  fi
+
+  if is_installed "usque-keenetic"; then
+    info "Пакет уже установлен — обновление..."
+    opkg update
+    opkg upgrade usque-keenetic
+    info "Обновление завершено."
+  else
+    info "Пакет не установлен — установка..."
+    mkdir -p /opt/etc/opkg
+    echo "src/gz usque-keenetic https://side-effect-tm.github.io/usque-keenetic/$ARCH" > /opt/etc/opkg/usque-keenetic.conf
+    info "Репозиторий: https://side-effect-tm.github.io/usque-keenetic/$ARCH"
+    opkg update
+    opkg install usque-keenetic
+    info "Установка завершена."
+  fi
+
+  echo
+  printf '%s\n' "${BOLD}Управление сервисом${NC}"
+  cat << 'EOF'
+/opt/etc/init.d/S51usque (start | stop | restart)
+EOF
+  echo
+  printf '%s\n' "${BOLD}Конфигурация${NC}"
+  echo "Файл конфигурации расположен по пути /opt/etc/usque/usque.conf"
+  cat << 'EOF'
+# Интерфейс. Определяется автоматически при установке.
+# Должен быть вида opkgtun*
+IFACE="opkgtun0"
+EOF
+}
+
+# ---------------------------------------------------------------------------
 # 88. Удаление пакетов
 # ---------------------------------------------------------------------------
 # Удаление резервных копий конфигов/списков (.bak.*, *-opkg)
@@ -2205,6 +2247,18 @@ remove_tg_ws_proxy() {
   fi
 }
 
+remove_usque_keenetic() {
+  if is_installed "usque-keenetic"; then
+    opkg remove --autoremove usque-keenetic 2>/dev/null || true
+    info "usque-keenetic удалён."
+  else
+    warn "usque-keenetic не установлен."
+  fi
+  if [ -f /opt/etc/opkg/usque-keenetic.conf ]; then
+    rm -f /opt/etc/opkg/usque-keenetic.conf && info "  удалён: /opt/etc/opkg/usque-keenetic.conf"
+  fi
+}
+
 menu_remove() {
   echo
   printf '%s\n' "${BOLD}Удаление:${NC}"
@@ -2217,6 +2271,7 @@ menu_remove() {
   is_dpi_detector_installed         && items="$items dpi-detector"      && types="$types bin"
   is_awg_manager_installed          && items="$items awg-manager"       && types="$types opkg"
   is_installed "tg-ws-proxy"        && items="$items tg-ws-proxy"       && types="$types opkg"
+  is_installed "usque-keenetic"     && items="$items usque-keenetic"    && types="$types opkg"
 
   local i=1
   local p
@@ -2274,6 +2329,8 @@ menu_remove() {
             remove_awg_manager
           elif [ "$target" = "tg-ws-proxy" ]; then
             remove_tg_ws_proxy
+          elif [ "$target" = "usque-keenetic" ]; then
+            remove_usque_keenetic
           else
             opkg remove --autoremove "$target"
             info "$target удалён."
@@ -2312,6 +2369,7 @@ main_menu() {
     echo "      11. awg-manager"
     echo "      12. KeenKit"
     echo "      13. TG WS Proxy Go"
+    echo "      14. usque-keenetic"
     echo
     printf '%s\n' "${CYAN}${BOLD}[::]  ${LBL_REMOVE}${NC}"
     echo "      77. $LBL_77"
@@ -2334,6 +2392,7 @@ main_menu() {
       11)  menu_awg_manager ;;
       12)  menu_keenkit ;;
       13)  menu_tg_ws_proxy ;;
+      14)  menu_usque_keenetic ;;
       77)  menu_change_language; continue ;;
       88)  menu_remove ;;
       99)  update_self ;;
