@@ -10,11 +10,21 @@
 
 set -e
 
-SCRIPT_VERSION="0.5.12"
+SCRIPT_VERSION="0.5.14"
 
 REPO_URL="https://github.com/rndnaame/nfqws-menu"
 RAW_BASE="https://raw.githubusercontent.com/rndnaame/nfqws-menu/main"
 STRATEGIES_API="https://api.github.com/repos/rndnaame/nfqws-menu/contents/strategies"
+
+# LD_LIBRARY_PATH: OPKG-приоритет для Entware, SYSTEM — для ndmc (системные libs)
+SYSTEM_LD_LIBRARY_PATH="/lib:/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+OPKG_LD_LIBRARY_PATH="/opt/lib:/opt/usr/lib:/lib:/usr/lib"
+export LD_LIBRARY_PATH="$OPKG_LD_LIBRARY_PATH"
+
+# ndmc должен видеть системные библиотеки, иначе OpenSSL из /opt ломает CLI
+ndmc_cli() {
+  LD_LIBRARY_PATH="$SYSTEM_LD_LIBRARY_PATH" ndmc -c "$@"
+}
 
 # Цвета через printf (работает в busybox ash / Entware)
 # Переменные содержат реальный ESC-символ, а не строку \033
@@ -1222,14 +1232,14 @@ show_dns_servers() {
     return 1
   fi
 
-  ndmc -c show dns-proxy 2>/dev/null | awk -v c_reset="$NC" \
+  ndmc_cli "show dns-proxy" 2>/dev/null | awk -v c_reset="$NC" \
                                            -v c_bold="$BOLD" \
                                            -v c_cyan="$CYAN" \
                                            -v c_green="$GREEN" \
                                            -v c_yellow="$YELLOW" \
                                            -v c_magenta="$MAGENTA" \
                                            -v c_dim="$DIM" '
-    BEGIN { dot_gen_cnt = 0; doh_gen_cnt = 0; dom_cnt = 0 }
+    BEGIN { dot_gen_cnt = 0; doh_gen_cnt = 0; dom_cnt = 0; dot_c = 0; doh_c = 0 }
 
     /server-tls:/ {
       if (in_dot && addr != "") {
@@ -1239,7 +1249,8 @@ show_dns_servers() {
         } else {
           dom_list[dom_cnt++] = "  " c_yellow "🌐" c_reset " " sprintf("%-18s", domain) " " c_dim "➔" c_reset " " target " " c_magenta "[DoT]" c_reset
         }
-        if (target != "") dot_tot[target] = 1
+        # каждый server-tls занимает слот (лимит 8), даже при одном IP на разные domain
+        dot_c++
       }
       in_dot=1; in_doh=0; addr=""; sni=""; domain=""; next
     }
@@ -1257,7 +1268,7 @@ show_dns_servers() {
         } else {
           dom_list[dom_cnt++] = "  " c_yellow "🌐" c_reset " " sprintf("%-18s", domain) " " c_dim "➔" c_reset " " target " " c_magenta "[DoT]" c_reset
         }
-        if (target != "") dot_tot[target] = 1
+        dot_c++
       }
       if (in_doh && uri != "") {
         gsub(/[ \t\r\n]/, "", uri)
@@ -1266,7 +1277,7 @@ show_dns_servers() {
         } else {
           dom_list[dom_cnt++] = "  " c_yellow "🌐" c_reset " " sprintf("%-18s", domain) " " c_dim "➔" c_reset " " uri " " c_cyan "[DoH]" c_reset
         }
-        if (uri != "") doh_tot[uri] = 1
+        doh_c++
       }
       in_doh=1; in_dot=0; addr=""; sni=""; uri=""; domain=""; next
     }
@@ -1283,7 +1294,7 @@ show_dns_servers() {
         } else {
           dom_list[dom_cnt++] = "  " c_yellow "🌐" c_reset " " sprintf("%-18s", domain) " " c_dim "➔" c_reset " " target " " c_magenta "[DoT]" c_reset
         }
-        if (target != "") dot_tot[target] = 1
+        dot_c++
       }
       if (in_doh && uri != "") {
         gsub(/[ \t\r\n]/, "", uri)
@@ -1292,11 +1303,8 @@ show_dns_servers() {
         } else {
           dom_list[dom_cnt++] = "  " c_yellow "🌐" c_reset " " sprintf("%-18s", domain) " " c_dim "➔" c_reset " " uri " " c_cyan "[DoH]" c_reset
         }
-        if (uri != "") doh_tot[uri] = 1
+        doh_c++
       }
-
-      for (k in dot_tot) dot_c++
-      for (k in doh_tot) doh_c++
 
       print c_cyan "┌────────────────────────────────────────────────────────┐" c_reset
       print c_cyan "│" c_bold "          УПРАВЛЕНИЕ DNS СЕРВЕРАМИ KEENETIC             " c_cyan "│" c_reset
@@ -1329,7 +1337,7 @@ show_dns_servers() {
 
 dns_save_config() {
   printf '%s' "Сохранение конфигурации..."
-  if ndmc -c system configuration save > /dev/null 2>&1; then
+  if ndmc_cli "system configuration save" > /dev/null 2>&1; then
     printf ' %s\n' "${GREEN}[ГОТОВО]${NC}"
   else
     printf ' %s\n' "${RED}[ОШИБКА]${NC}"
@@ -1350,7 +1358,7 @@ apply_dot() {
   [ -n "$domain" ] && cmd="$cmd domain $domain"
 
   printf '%s\n' "${CYAN}Применение DoT ($ip):${NC} ndmc -c \"$cmd\""
-  ndmc -c "$cmd" > /dev/null 2>&1 || warn "ndmc вернул ошибку при добавлении DoT $ip"
+  ndmc_cli "$cmd" > /dev/null 2>&1 || warn "ndmc вернул ошибку при добавлении DoT $ip"
 }
 
 apply_doh() {
@@ -1361,7 +1369,7 @@ apply_doh() {
   [ -n "$domain" ] && cmd="$cmd domain $domain"
 
   printf '%s\n' "${CYAN}Применение DoH ($uri):${NC} ndmc -c \"$cmd\""
-  ndmc -c "$cmd" > /dev/null 2>&1 || warn "ndmc вернул ошибку при добавлении DoH $uri"
+  ndmc_cli "$cmd" > /dev/null 2>&1 || warn "ndmc вернул ошибку при добавлении DoH $uri"
 }
 
 add_dot_menu() {
@@ -1615,7 +1623,7 @@ remove_dns_menu() {
   tmp_list="/tmp/dns_rem_list.txt"
   rm -f "$tmp_list"
 
-  ndmc -c show dns-proxy 2>/dev/null | awk '
+  ndmc_cli "show dns-proxy" 2>/dev/null | awk '
     /server-tls:/ {
       if (in_dot && addr != "") {
         p = (port != "") ? port : "853"
@@ -1765,7 +1773,7 @@ remove_dns_menu() {
       fi
 
       printf '%s\n' "${RED}Удаление:${NC} ndmc -c \"$cmd\""
-      if ndmc -c "$cmd" > /dev/null 2>&1; then
+      if ndmc_cli "$cmd" > /dev/null 2>&1; then
         removed_any=1
       else
         warn "ndmc не смог удалить: $target"

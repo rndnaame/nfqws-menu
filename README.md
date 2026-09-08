@@ -4,7 +4,7 @@
 
 Репозиторий также служит хранилищем готовых **стратегий** обхода DPI, **blobs** и **lists**.
 
-- Скрипт: [`nfqws-menu.sh`](nfqws-menu.sh) (текущая версия **0.5.12**)
+- Скрипт: [`nfqws-menu.sh`](nfqws-menu.sh) (текущая версия **0.5.14**)
 - Стратегии: [`strategies/`](strategies/)
 
 ### Официальные проекты
@@ -329,6 +329,14 @@ https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/nfqws-menu.sh
 ---
 
 ## Changelog
+
+### 0.5.14
+
+- **Счётчик DoT/DoH** — считает все записи `server-tls`/`server-https` (слоты), а не уникальные targets; два domain на один IP больше не схлопываются в 1
+
+### 0.5.13
+
+- **LD_LIBRARY_PATH / ndmc_cli** — OPKG-путь по умолчанию; вызовы `ndmc` через `ndmc_cli` с системными библиотеками (как у spatiumstas), чтобы OpenSSL из Entware не ломал CLI
 
 ### 0.5.12
 
