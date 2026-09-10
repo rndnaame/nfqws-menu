@@ -10,7 +10,7 @@
 
 set -e
 
-SCRIPT_VERSION="0.6.3"
+SCRIPT_VERSION="0.6.12"
 
 REPO_URL="https://github.com/rndnaame/nfqws-menu"
 RAW_BASE="https://raw.githubusercontent.com/rndnaame/nfqws-menu/main"
@@ -86,6 +86,8 @@ ui_apply_lang() {
       LBL_4="Обновить IPSet List"
       LBL_5="Обход блокировки DoT/DoH"
       LBL_6="Управление DoT/DoH"
+      LBL_7="Загрузить rkn.list (125k+ доменов)"
+      LBL_7F="Смена активных fake:blob"
       LBL_77="Change language"
       LBL_88="Удаление пакетов"
       LBL_99="Обновить скрипт"
@@ -113,6 +115,8 @@ ui_apply_lang() {
       LBL_4="Update IPSet List"
       LBL_5="Bypass DoT/DoH blocks"
       LBL_6="Manage DoT/DoH"
+      LBL_7="Download rkn.list (125k+ domains)"
+      LBL_7F="Change active fake:blob"
       LBL_77="Change language"
       LBL_88="Remove packages"
       LBL_99="Update this script"
@@ -877,7 +881,74 @@ update_ipset_list() {
 }
 
 # ---------------------------------------------------------------------------
-# 5. DoT/DoH bypass strategy в NFQWS_ARGS_CUSTOM
+# 5. rkn.list (zapret4rocket) → nfqws2 lists + MODE_LIST
+# ---------------------------------------------------------------------------
+RKN_LIST_URL="https://raw.githubusercontent.com/IndeecFOX/zapret4rocket/refs/heads/master/extra_strats/TCP/RKN/List.txt"
+RKN_LIST_DEST="/opt/etc/nfqws2/lists/rkn.list"
+RKN_HOSTLIST_ARG="--hostlist=/opt/etc/nfqws2/lists/rkn.list"
+
+update_rkn_list() {
+  refresh_opkg_cache
+  if ! is_installed "nfqws2-keenetic"; then
+    error "Пункт доступен только при установленном nfqws2-keenetic."
+    return 1
+  fi
+
+  local conf="/opt/etc/nfqws2/nfqws2.conf"
+  local tmp="/tmp/nfqws-rkn-$$.txt" cleaned="/tmp/nfqws-rkn-clean-$$.txt" count
+
+  info "Скачивание rkn.list (zapret4rocket) ..."
+  info "URL: $RKN_LIST_URL"
+  if ! download_file "$RKN_LIST_URL" "$tmp"; then
+    error "Не удалось скачать список."
+    rm -f "$tmp"
+    return 1
+  fi
+
+  grep -vE '^[[:space:]]*(#|;|$)' "$tmp" | sed 's/[[:space:]]*$//' | grep -vE '^$' > "$cleaned" || true
+  count=$(wc -l < "$cleaned" 2>/dev/null | tr -d ' ')
+  if [ -z "$count" ] || [ "$count" = "0" ]; then
+    error "Скачанный файл пуст или не содержит записей."
+    rm -f "$tmp" "$cleaned"
+    return 1
+  fi
+  info "Записей в списке: $count"
+
+  mkdir -p "$(dirname "$RKN_LIST_DEST")"
+  cp "$cleaned" "$RKN_LIST_DEST"
+  info "Записано: $RKN_LIST_DEST ($count строк)"
+  rm -f "$tmp" "$cleaned"
+
+  if [ ! -f "$conf" ]; then
+    warn "Конфиг не найден: $conf — MODE_LIST не обновлён."
+    return 0
+  fi
+
+  # -- перед паттерном: иначе grep воспринимает --hostlist=... как свою опцию
+  if grep -qF -- "$RKN_HOSTLIST_ARG" "$conf" 2>/dev/null; then
+    info "MODE_LIST уже содержит $RKN_HOSTLIST_ARG"
+  elif grep -qE '^MODE_LIST=' "$conf" 2>/dev/null; then
+    backup_file "$conf"
+    # Вставляем --hostlist=...rkn.list перед закрывающей кавычкой MODE_LIST="..."
+    sed -i "s|^\\(MODE_LIST=\"[^\"]*\\)\"|\\1 ${RKN_HOSTLIST_ARG}\"|" "$conf"
+    if grep -qF -- "$RKN_HOSTLIST_ARG" "$conf" 2>/dev/null; then
+      warn "В MODE_LIST добавлено: $RKN_HOSTLIST_ARG"
+    else
+      warn "Не удалось изменить MODE_LIST автоматически — добавьте вручную:"
+      warn "  MODE_LIST=\"... $RKN_HOSTLIST_ARG\""
+    fi
+  else
+    backup_file "$conf"
+    printf '\nMODE_LIST="--hostlist=/opt/etc/nfqws2/lists/user.list %s"\n' "$RKN_HOSTLIST_ARG" >> "$conf"
+    info "MODE_LIST создан с user.list и rkn.list"
+  fi
+
+  service_restart /opt/etc/init.d/S51nfqws2
+  info "Сервис nfqws2 перезапущен."
+}
+
+# ---------------------------------------------------------------------------
+# 6. DoT/DoH bypass strategy в NFQWS_ARGS_CUSTOM
 # ---------------------------------------------------------------------------
 DOT_DOH_STRATEGY='               #DNS
                --filter-tcp=443,853 --filter-l7=tls
@@ -1031,7 +1102,7 @@ menu_dot_doh() {
 }
 
 # ---------------------------------------------------------------------------
-# 6. Управление DoT/DoH через ndmc
+# 9. Управление DoT/DoH через ndmc
 # ---------------------------------------------------------------------------
 show_dns_servers() {
   if ! command -v ndmc >/dev/null 2>&1; then
@@ -1679,6 +1750,16 @@ menu_dpi_detector() {
   info "Очистка дубликатов dpi-detector (/tmp, /opt/root)..."
   cleanup_dpi_detector_dupes
   info "Установка dpi-detector завершена."
+  if [ -x /opt/bin/dpi-detector ]; then
+    info "Запуск /opt/bin/dpi-detector ..."
+    if [ -c /dev/tty ]; then
+      /opt/bin/dpi-detector </dev/tty
+    else
+      /opt/bin/dpi-detector
+    fi
+  else
+    warn "Бинарник /opt/bin/dpi-detector не найден — запуск пропущен."
+  fi
 }
 
 menu_awg_manager() {
@@ -1875,9 +1956,338 @@ remove_usque_keenetic() {
   [ -f /opt/etc/opkg/usque-keenetic.conf ] && rm -f /opt/etc/opkg/usque-keenetic.conf && info "  удалён: /opt/etc/opkg/usque-keenetic.conf"
 }
 
+remove_keenkit() {
+  if [ -f /opt/keenkit.sh ]; then
+    rm -f /opt/keenkit.sh && info "  удалён: /opt/keenkit.sh"
+    info "KeenKit удалён."
+  else
+    warn "KeenKit не найден (/opt/keenkit.sh)."
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# 7. Смена активных fake:blob
+# ---------------------------------------------------------------------------
+nfqws_blobs_dir() {
+  case "$1" in
+    1) echo "/opt/etc/nfqws" ;;
+    2) echo "/opt/etc/nfqws2/blobs" ;;
+  esac
+}
+
+# map_file: name|basename
+# list_file: idx|section|name|basename
+parse_fake_blobs() {
+  local conf="$1"
+  local map_file="$2"
+  local list_file="$3"
+  local cur_sec="?" in_quote=0 line name path base
+  local seen_file="/tmp/nfqws-fakeblob-seen-$$"
+  local raw_file="/tmp/nfqws-fakeblob-raw-$$"
+
+  : > "$map_file"
+  : > "$list_file"
+  : > "$seen_file"
+  : > "$raw_file"
+
+  # 1) Маппинг --blob=name:path
+  tr ' \t' '\n' < "$conf" 2>/dev/null | grep -E '^--blob=' | while IFS= read -r tok; do
+    name=${tok#--blob=}
+    name=${name%%:*}
+    path=${tok#--blob=${name}:}
+    path=${path#@}
+    # убрать хвост кавычек/мусор от закрытия multiline
+    path=$(printf '%s' "$path" | tr -d '"'"'"'')
+    case "$path" in
+      0x*|0X*) base="(hex)" ;;
+      *) base=$(basename "$path" 2>/dev/null) ;;
+    esac
+    base=$(printf '%s' "$base" | tr -d '"'"'"'')
+    [ -n "$name" ] && [ -n "$base" ] && printf '%s|%s\n' "$name" "$base"
+  done | sort -u > "$map_file"
+
+  # 2) Построчный обход: секция + fake:blob=
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      NFQWS_BASE_ARGS=\"*|NFQWS_ARGS=\"*|NFQWS_ARGS_QUIC=\"*|NFQWS_ARGS_UDP=\"*|NFQWS_ARGS_CUSTOM=\"*|NFQWS_EXTRA_ARGS=\"*)
+        cur_sec=${line%%=*}
+        in_quote=1
+        case "$line" in
+          *\")
+            # однострочный VAR="..." — всё ещё ищем fake на этой строке
+            ;;
+        esac
+        ;;
+      NFQWS_BASE_ARGS=|NFQWS_ARGS=|NFQWS_ARGS_QUIC=|NFQWS_ARGS_UDP=|NFQWS_ARGS_CUSTOM=|NFQWS_EXTRA_ARGS=)
+        cur_sec=${line%%=*}
+        in_quote=0
+        ;;
+    esac
+
+    if echo "$line" | grep -q 'fake:blob='; then
+      echo "$line" | grep -oE 'fake:blob=[^:[:space:]"]+' 2>/dev/null | while IFS= read -r fb; do
+        name=${fb#fake:blob=}
+        case "$name" in
+          0x*|0X*|'') continue ;;
+        esac
+        if grep -qxF "$name" "$seen_file" 2>/dev/null; then
+          continue
+        fi
+        echo "$name" >> "$seen_file"
+        base=$(grep -E "^${name}\|" "$map_file" 2>/dev/null | head -1 | cut -d'|' -f2)
+        [ -z "$base" ] && base="(нет --blob= / встроенный)"
+        printf '%s|%s|%s\n' "$cur_sec" "$name" "$base" >> "$raw_file"
+      done
+    fi
+
+    if [ "$in_quote" -eq 1 ]; then
+      case "$line" in
+        NFQWS_*ARGS*=\"*) ;;
+        *\")
+          in_quote=0
+          ;;
+      esac
+    fi
+  done < "$conf"
+
+  # Нумерация уникальных имён (первое появление)
+  local idx=0
+  : > "$list_file"
+  while IFS='|' read -r sec name base; do
+    [ -z "$name" ] && continue
+    if grep -qE "\|${name}\|" "$list_file" 2>/dev/null; then
+      continue
+    fi
+    idx=$((idx + 1))
+    printf '%s|%s|%s|%s\n' "$idx" "$sec" "$name" "$base" >> "$list_file"
+  done < "$raw_file"
+
+  rm -f "$raw_file" "$seen_file"
+  [ "$idx" -gt 0 ]
+}
+
+list_repo_blobs() {
+  local cache="/tmp/nfqws-repo-blobs.list"
+  local now age=999999
+  now=$(date +%s 2>/dev/null || echo 0)
+  if [ -f "$cache" ]; then
+    age=$((now - $(stat -c %Y "$cache" 2>/dev/null || echo 0)))
+  fi
+  if [ -f "$cache" ] && [ "$age" -lt 3600 ]; then
+    cat "$cache"
+    return 0
+  fi
+  if fetch_url "${STRATEGIES_API}/blobs" 2>/dev/null | \
+      grep -oE '"name":[[:space:]]*"[^"]+\.bin"' | \
+      sed 's/.*"\([^"]*\.bin\)".*/\1/' | sort -u > "$cache"; then
+    cat "$cache"
+    return 0
+  fi
+  printf '%s\n' \
+    ACTIVE_DISCORD_UDP.bin ACTIVE_GAME_UDP.bin \
+    quic_initial_4pda_to.bin quic_initial_5ka_ru.bin quic_initial_rutube_ru.bin \
+    quic_initial_steamcommunity_com.bin quic_initial_tencent_com.bin \
+    quic_initial_www_google_com.bin \
+    stun.bin stun2.bin \
+    tls_clienthello_4pda_to.bin tls_clienthello_5ka_ru.bin \
+    tls_clienthello_max_ru.bin tls_clienthello_sochi_park.bin \
+    tls_clienthello_www_google_com.bin
+}
+
+menu_change_fake_blob() {
+  need_nfqws_installed || return 0
+  pick_nfqws_ver 0 || { warn "Отменено."; return 0; }
+
+  local conf blobs_dir map_file list_file
+  conf=$(nfqws_conf_path "$NFQWS_VER")
+  blobs_dir=$(nfqws_blobs_dir "$NFQWS_VER")
+  if [ ! -f "$conf" ]; then
+    error "Конфиг $conf не найден."
+    return 0
+  fi
+
+  map_file="/tmp/nfqws-fakeblob-map-$$"
+  list_file="/tmp/nfqws-fakeblob-list-$$"
+
+  echo
+  info "Анализ конфига: $conf"
+  if ! parse_fake_blobs "$conf" "$map_file" "$list_file"; then
+    warn "В конфиге не найдено использований fake:blob=NAME: (кроме hex)."
+    rm -f "$map_file" "$list_file"
+    return 0
+  fi
+
+  echo
+  printf '%s\n' "${BOLD}Сейчас в конфиге найдены следующие fake:blob:${NC}"
+  local last_sec="" idx sec name base
+  while IFS='|' read -r idx sec name base; do
+    if [ "$sec" != "$last_sec" ]; then
+      echo
+      printf '%s\n' "${CYAN}${sec}${NC}"
+      last_sec=$sec
+    fi
+    printf '  [%s] %s (%s)\n' "$idx" "$name" "$base"
+  done < "$list_file"
+  echo
+
+  ask "Какой из найденных fake:blob требуется заменить? (номер / Enter = отмена): "
+  read -r choice
+  case "$choice" in
+    ''|0|q|Q|н|Н) info "Отменено."; rm -f "$map_file" "$list_file"; return 0 ;;
+  esac
+  if ! echo "$choice" | grep -qE '^[0-9]+$'; then
+    warn "Нужен номер."
+    rm -f "$map_file" "$list_file"
+    return 0
+  fi
+
+  local sel_line sel_name sel_base sel_sec
+  sel_line=$(grep -E "^${choice}\|" "$list_file" | head -1)
+  if [ -z "$sel_line" ]; then
+    warn "Номер $choice не найден в списке."
+    rm -f "$map_file" "$list_file"
+    return 0
+  fi
+  sel_sec=$(echo "$sel_line" | cut -d'|' -f2)
+  sel_name=$(echo "$sel_line" | cut -d'|' -f3)
+  sel_base=$(echo "$sel_line" | cut -d'|' -f4)
+
+  info "Выбрано: [$choice] $sel_name ($sel_base) в $sel_sec"
+
+  echo
+  printf '%s\n' "${BOLD}Доступные blob-файлы для замены (--blob=${sel_name}:...):${NC}"
+  echo
+
+  local i=1 b cand_file="/tmp/nfqws-blob-cands-$$"
+  : > "$cand_file"
+
+  if [ -d "$blobs_dir" ]; then
+    for b in "$blobs_dir"/*.bin; do
+      [ -f "$b" ] || continue
+      printf '%s\n' "$(basename "$b")"
+    done
+  fi | sort -u > "/tmp/nfqws-local-blobs-$$"
+
+  list_repo_blobs > "/tmp/nfqws-repo-blobs-$$"
+
+  {
+    cat "/tmp/nfqws-local-blobs-$$" 2>/dev/null
+    cat "/tmp/nfqws-repo-blobs-$$" 2>/dev/null
+  } | awk '!a[$0]++' > "$cand_file"
+
+  i=1
+  while IFS= read -r b; do
+    [ -z "$b" ] && continue
+    if [ -f "${blobs_dir}/${b}" ]; then
+      printf '  [%2d] %s  (локально)\n' "$i" "$b"
+    else
+      printf '  [%2d] %s  (из репозитория)\n' "$i" "$b"
+    fi
+    i=$((i + 1))
+  done < "$cand_file"
+  local max_cand=$((i - 1))
+
+  if [ "$max_cand" -lt 1 ]; then
+    warn "Нет доступных .bin файлов."
+    rm -f "$map_file" "$list_file" "$cand_file" /tmp/nfqws-local-blobs-$$ /tmp/nfqws-repo-blobs-$$
+    return 0
+  fi
+  echo
+  ask "Номер blob-файла для замены (Enter = отмена): "
+  read -r bchoice
+  case "$bchoice" in
+    ''|0|q|Q) info "Отменено."; rm -f "$map_file" "$list_file" "$cand_file" /tmp/nfqws-local-blobs-$$ /tmp/nfqws-repo-blobs-$$; return 0 ;;
+  esac
+  if ! echo "$bchoice" | grep -qE '^[0-9]+$' || [ "$bchoice" -lt 1 ] || [ "$bchoice" -gt "$max_cand" ]; then
+    warn "Неверный номер."
+    rm -f "$map_file" "$list_file" "$cand_file" /tmp/nfqws-local-blobs-$$ /tmp/nfqws-repo-blobs-$$
+    return 0
+  fi
+
+  local new_bin new_path
+  new_bin=$(sed -n "${bchoice}p" "$cand_file")
+  new_path="${blobs_dir}/${new_bin}"
+
+  if [ ! -f "$new_path" ]; then
+    info "Скачивание $new_bin → $new_path ..."
+    mkdir -p "$blobs_dir"
+    if ! download_file "${RAW_BASE}/strategies/blobs/${new_bin}" "$new_path"; then
+      error "Не удалось скачать $new_bin"
+      rm -f "$map_file" "$list_file" "$cand_file" /tmp/nfqws-local-blobs-$$ /tmp/nfqws-repo-blobs-$$
+      return 1
+    fi
+    info "Скачано."
+  fi
+
+  backup_file "$conf"
+
+  local tmp="/tmp/nfqws-fakeblob-edit-$$.conf"
+  if grep -qE -- "--blob=${sel_name}:" "$conf"; then
+    sed -E "s|--blob=${sel_name}:[^[:space:]\"]*|--blob=${sel_name}:@${new_path}|g" "$conf" > "$tmp"
+  else
+    warn "В конфиге нет --blob=${sel_name}:... — добавляю в NFQWS_BASE_ARGS."
+    local inserted=0
+    : > "$tmp"
+    while IFS= read -r line || [ -n "$line" ]; do
+      if [ "$inserted" -eq 0 ]; then
+        case "$line" in
+          NFQWS_BASE_ARGS=\"*)
+            printf '%s\n' "$line" >> "$tmp"
+            case "$line" in
+              *\")
+                # однострочный — добавим после через sed-подобную вставку на следующей итерации сложно;
+                # вставим отдельную строку с дописыванием после открытия, если multi-line
+                ;;
+              *)
+                printf '                 --blob=%s:@%s\n' "$sel_name" "$new_path" >> "$tmp"
+                inserted=1
+                ;;
+            esac
+            continue
+            ;;
+          NFQWS_BASE_ARGS=\")
+            printf '%s\n' "$line" >> "$tmp"
+            printf '                 --blob=%s:@%s\n' "$sel_name" "$new_path" >> "$tmp"
+            inserted=1
+            continue
+            ;;
+        esac
+      fi
+      printf '%s\n' "$line" >> "$tmp"
+    done < "$conf"
+    if [ "$inserted" -eq 0 ]; then
+      printf '\n# added by nfqws-menu\nNFQWS_BASE_ARGS="${NFQWS_BASE_ARGS} --blob=%s:@%s"\n' \
+        "$sel_name" "$new_path" >> "$tmp"
+    fi
+  fi
+
+  if [ ! -s "$tmp" ]; then
+    error "Ошибка формирования нового конфига."
+    rm -f "$tmp" "$map_file" "$list_file" "$cand_file" /tmp/nfqws-local-blobs-$$ /tmp/nfqws-repo-blobs-$$
+    return 1
+  fi
+
+  mv "$tmp" "$conf"
+  info "Готово: --blob=${sel_name}:@${new_path}"
+  info "  (было: $sel_base → стало: $new_bin)"
+
+  echo
+  if confirm_yes "Перезапустить сервис nfqws${NFQWS_VER}?"; then
+    service_restart "$(nfqws_init_path "$NFQWS_VER")"
+    info "Сервис перезапущен."
+  else
+    info "Перезапуск пропущен — примените вручную."
+  fi
+
+  rm -f "$map_file" "$list_file" "$cand_file" /tmp/nfqws-local-blobs-$$ /tmp/nfqws-repo-blobs-$$
+  return 0
+}
+
+
 menu_remove() {
   echo
-  printf '%s\n' "${BOLD}Удаление:${NC}"
+  printf '%s\n' "${BOLD}Что удалить?${NC}"
+  echo
 
   local items="" p i=1 target idx
   is_installed "nfqws-keenetic"     && items="$items nfqws-keenetic"
@@ -1887,19 +2297,21 @@ menu_remove() {
   is_awg_manager_installed          && items="$items awg-manager"
   is_installed "tg-ws-proxy"        && items="$items tg-ws-proxy"
   is_installed "usque-keenetic"     && items="$items usque-keenetic"
+  [ -f /opt/keenkit.sh ]            && items="$items KeenKit"
 
   if [ -n "$items" ]; then
     for p in $items; do
-      printf "  %d) %s\n" "$i" "$p"
+      printf "  [%d] %s\n" "$i" "$p"
       i=$((i + 1))
     done
   else
     warn "Установленных пакетов не найдено."
   fi
-  echo "  a) Удалить все пакеты NFQWS"
-  echo "  b) Удалить резервные копии (.bak.* / *-opkg)"
-  echo "  0) Назад"
-  ask "Что удалить? (номер / a / b / 0): "
+  echo "  [a] Удалить все пакеты NFQWS"
+  echo "  [b] Удалить резервные копии (.bak.* / *-opkg)"
+  echo "  [0] Назад"
+  echo
+  ask "Выбор (номер / a / b / 0): "
   read -r choice
 
   case "$choice" in
@@ -1925,6 +2337,7 @@ menu_remove() {
         awg-manager)   remove_awg_manager ;;
         tg-ws-proxy)   remove_tg_ws_proxy ;;
         usque-keenetic) remove_usque_keenetic ;;
+        KeenKit)       remove_keenkit ;;
         *)
           opkg remove --autoremove "$target"
           info "$target удалён."
@@ -1954,8 +2367,11 @@ main_menu() {
     printf '%s\n' "${CYAN}${BOLD}[::]  ${LBL_STRATEGIES}${NC}"
     echo "      3.  $LBL_3"
     echo "      4.  $LBL_4"
-    echo "      5.  $LBL_5"
-    echo "      6.  $LBL_6"
+    echo "      5.  $LBL_7"
+    echo "      6.  $LBL_5"
+    echo "      7.  $LBL_7F"
+    echo
+    echo "      9.  $LBL_6"
     echo
     printf '%s\n' "${CYAN}${BOLD}[::]  ${LBL_UTILS}${NC}"
     echo "      10. dpi-detector"
@@ -1980,8 +2396,10 @@ main_menu() {
       2)  install_web || true ;;
       3)  menu_strategy || true ;;
       4)  update_ipset_list || true ;;
-      5)  menu_dot_doh || true ;;
-      6)  menu_dns_manage || true ;;
+      5)  update_rkn_list || true ;;
+      6)  menu_dot_doh || true ;;
+      7)  menu_change_fake_blob || true ;;
+      9)  menu_dns_manage || true ;;
       10) menu_dpi_detector || true ;;
       11) menu_awg_manager || true ;;
       12) menu_keenkit || true ;;
