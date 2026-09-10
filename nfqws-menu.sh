@@ -1434,12 +1434,14 @@ add_doh_menu() {
 
 add_domain_menu() {
   echo
-  printf '%s\n' "${BOLD}Быстрая привязка DNS к целевым доменам (можно несколько через запятую, напр. 1,3,4):${NC}"
+  printf '%s\n' "${BOLD}Быстрая привязка DNS к целевым доменам (можно несколько через запятую, напр. 1,3,5):${NC}"
   echo " 1) CleanBrowsing DoT (185.228.168.9 + SNI) ➔ instagram.com"
   echo " 2) CleanBrowsing DoH (doh.cleanbrowsing.org) ➔ instagram.com"
   echo " 3) sw.ext.io DoT ➔ rutor.is & rutor.info"
   echo " 4) Malw Link DoH (dns.malw.link) ➔ ntc.party"
-  echo " 5) Ввести свой домен и выбрать сервер"
+  echo " 5) Xbox-DNS DoT ➔ gql.twitch.tv & usher.ttvnw.net"
+  echo " 6) Xbox-DNS DoH ➔ gql.twitch.tv & usher.ttvnw.net"
+  echo " 7) Ввести свой домен и выбрать сервер"
   echo " 0) Отмена"
   printf '%s\n' "${DIM}────────────────────────────────────────────────────────${NC}"
   ask "Выберите варианты: "
@@ -1458,6 +1460,16 @@ add_domain_menu() {
         ;;
       4) apply_doh "https://dns.malw.link/dns-query" "ntc.party"; added_any=1 ;;
       5)
+        apply_dot "xbox-dns.ru" "xbox-dns.ru" "gql.twitch.tv"
+        apply_dot "xbox-dns.ru" "xbox-dns.ru" "usher.ttvnw.net"
+        added_any=1
+        ;;
+      6)
+        apply_doh "https://xbox-dns.ru/dns-query" "gql.twitch.tv"
+        apply_doh "https://xbox-dns.ru/dns-query" "usher.ttvnw.net"
+        added_any=1
+        ;;
+      7)
         ask "Введите домен (например: example.com): "; read -r dom
         [ -z "$dom" ] && continue
         echo "Тип протокола: 1) DoT  2) DoH"
