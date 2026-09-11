@@ -4,7 +4,7 @@
 
 Репозиторий также служит хранилищем готовых **стратегий** обхода DPI, **blobs** и **lists**.
 
-- Скрипт: [`nfqws-menu.sh`](nfqws-menu.sh) (текущая версия **0.6.15**)
+- Скрипт: [`nfqws-menu.sh`](nfqws-menu.sh) (текущая версия **0.6.18**)
 - Стратегии: [`strategies/`](strategies/)
 
 ### Официальные проекты
@@ -30,10 +30,13 @@
 Подключитесь к Entware (SSH, порт 222 или 22, логин `root`):
 
 ```bash
-opkg update && opkg install curl && curl -sSL https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/nfqws-menu.sh -o /opt/nfqws-menu.sh && sh /opt/nfqws-menu.sh
+# Скачать и запустить
+wget -O /opt/nfqws-menu.sh https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/nfqws-menu.sh
+chmod +x /opt/nfqws-menu.sh
+sh /opt/nfqws-menu.sh
 ```
 
-или wget:
+или одной строкой:
 
 ```bash
 wget -O /opt/nfqws-menu.sh https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/nfqws-menu.sh && chmod +x /opt/nfqws-menu.sh && sh /opt/nfqws-menu.sh
@@ -161,11 +164,12 @@ menu
 
 Только при установленном **nfqws2-keenetic**.
 
+- Если `/opt/etc/nfqws2/lists/rkn.list` **уже есть** — спрашивает, обновлять ли список (**по умолчанию: Нет**). При отказе скачивание пропускается.
 - Скачивает большой список доменов РКН из [IndeecFOX/zapret4rocket](https://github.com/IndeecFOX/zapret4rocket)  
   (`extra_strats/TCP/RKN/List.txt`).
 - Записывает в `/opt/etc/nfqws2/lists/rkn.list`.
 - Добавляет `--hostlist=/opt/etc/nfqws2/lists/rkn.list` в `MODE_LIST` конфига (с бэкапом), если его ещё нет.
-- Перезапускает `S51nfqws2`.
+- **Перезапуск** `S51nfqws2` только при реальных изменениях (обновлён список и/или изменён `MODE_LIST`). Если hostlist уже был в конфиге и список не обновляли — перезапуск не выполняется.
 
 ### 6. Обход блокировки DoT/DoH
 
@@ -175,12 +179,13 @@ menu
 
 ### 7. Смена активных fake:blob
 
-Позволяет заменить используемые в конфиге `fake:blob=NAME` на другой `.bin`-файл.
+Позволяет заменить используемые в конфиге `fake:blob=NAME` на другой `.bin`-файл (переназначает путь в `--blob=NAME:…`).
 
-- Парсит конфиг (v1 или v2), находит все `fake:blob=` и соответствующие `--blob=name:path`.
-- Показывает список найденных имён по секциям (`NFQWS_ARGS`, `NFQWS_ARGS_CUSTOM` и т.д.).
-- Предлагает локальные файлы из каталога blobs и файлы из репозитория `strategies/blobs/`.
-- При выборе файла из репозитория — скачивает его, обновляет путь в `--blob=…`, перезапускает сервис.
+- Быстрый разбор конфига (v1/v2) одним проходом **awk**: секции `NFQWS_*ARGS*`, map `--blob=name:path`, уникальные `fake:blob=` (hex пропускаются).
+- Показывает список найденных имён по секциям.
+- Предлагает локальные `.bin` из каталога blobs и файлы из репозитория `strategies/blobs/` (кэш списка API ~1 ч).
+- При выборе файла из репозитория — скачивает его, обновляет `--blob=…`, бэкап конфига.
+- Перезапуск сервиса — по подтверждению (по умолчанию Да).
 
 ### 9. Управление DoT/DoH
 
@@ -326,9 +331,18 @@ IFACE="opkgtun0"
 
 ## Changelog
 
+### 0.6.18
+
+- **п. 7** — ускорен разбор конфига: один проход `awk` вместо shell+grep на каждую строку
+
+### 0.6.16 – 0.6.17
+
+- **п. 5** — если `rkn.list` уже есть, спрашивает об обновлении (по умолчанию **Нет**)
+- **п. 5** — перезапуск `S51nfqws2` только при изменениях (список и/или `MODE_LIST`)
+
 ### 0.6.15
 
-- Актуальная версия скрипта (см. `SCRIPT_VERSION` в `nfqws-menu.sh`)
+- Базовая линейка 0.6.x (см. ниже)
 
 ### 0.6.x (основные изменения относительно 0.5.x)
 
