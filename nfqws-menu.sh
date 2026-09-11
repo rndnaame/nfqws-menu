@@ -10,7 +10,7 @@
 
 set -e
 
-SCRIPT_VERSION="0.6.19"
+SCRIPT_VERSION="0.6.20"
 
 REPO_URL="https://github.com/rndnaame/nfqws-menu"
 RAW_BASE="https://raw.githubusercontent.com/rndnaame/nfqws-menu/main"
@@ -718,6 +718,13 @@ apply_strategy() {
   if ! download_file "$conf_path" "$tmp"; then
     error "Не удалось скачать $conf_path"
     return 1
+  fi
+
+  # CRLF → LF: иначе source конфига даёт «: not found» и ломает порты в iptables
+  if tr -d '\r' < "$tmp" > "${tmp}.lf" 2>/dev/null; then
+    mv "${tmp}.lf" "$tmp"
+  else
+    rm -f "${tmp}.lf"
   fi
 
   backup_file "$conf_dest"
