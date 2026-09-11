@@ -10,7 +10,7 @@
 
 set -e
 
-SCRIPT_VERSION="0.6.21"
+SCRIPT_VERSION="0.6.22"
 
 REPO_URL="https://github.com/rndnaame/nfqws-menu"
 RAW_BASE="https://raw.githubusercontent.com/rndnaame/nfqws-menu/main"
@@ -1847,7 +1847,7 @@ $name"
   local pairs="/tmp/nfqws-hosts-pairs-$$.txt"
   : > "$pairs"
 
-  # Собираем все IP\tDOMAIN из выбранных секций (без pipe-subshell)
+  # Собираем IP\tDOMAIN: только IPv4, валидный домен (Keenetic ip host ≈64 записей)
   local sec
   for sec in $selected_secs; do
     [ -z "$sec" ] && continue
@@ -1864,16 +1864,29 @@ $name"
       insec && NF >= 2 {
         ip = $1
         domain = $2
-        if (domain == "" || domain == "." || domain ~ /^\.+$/) next
+        # IPv6 не поддерживается командой ip host
+        if (ip ~ /:/) next
+        # битые/пустые домены (objects..com, .com, my..org)
+        if (domain == "" || domain ~ /^\./ || domain ~ /\.\./ || domain !~ /\./) next
         print ip "\t" domain
       }
     ' "$tmp" >> "$pairs"
   done
 
   if [ ! -s "$pairs" ]; then
-    warn "В выбранных секциях нет валидных записей IP DOMAIN."
+    warn "В выбранных секциях нет валидных записей IPv4 DOMAIN."
     rm -f "$tmp" "$sec_file" "$pairs"
     return 0
+  fi
+
+  # Один IP на домен (последний) — ip host хранит одну запись на имя
+  local pairs_uniq="/tmp/nfqws-hosts-uniq-$$.txt"
+  awk -F '\t' '{ dom[$2] = $1 } END { for (d in dom) print dom[d] "\t" d }' "$pairs" > "$pairs_uniq"
+
+  local n_pairs
+  n_pairs=$(wc -l < "$pairs_uniq" | tr -d ' ')
+  if [ "$n_pairs" -gt 64 ]; then
+    warn "Keenetic допускает до 64 записей ip host (сейчас $n_pairs). Часть может не добавиться."
   fi
 
   local added=0 failed=0
@@ -1888,14 +1901,14 @@ $name"
       warn "  ошибка: $domain → $ip"
       failed=$((failed + 1))
     fi
-  done < "$pairs"
+  done < "$pairs_uniq"
 
-  info "Добавлено: $added, ошибок: $failed"
+  info "Добавлено: $added, ошибок: $failed (уникальных доменов: $n_pairs)"
   if [ "$added" -gt 0 ] || [ "$failed" -gt 0 ]; then
     dns_save_config
   fi
 
-  rm -f "$tmp" "$sec_file" "$pairs"
+  rm -f "$tmp" "$sec_file" "$pairs" "$pairs_uniq"
   info "Готово."
 }
 
