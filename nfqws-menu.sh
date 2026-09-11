@@ -10,7 +10,7 @@
 
 set -e
 
-SCRIPT_VERSION="0.6.18"
+SCRIPT_VERSION="0.6.19"
 
 REPO_URL="https://github.com/rndnaame/nfqws-menu"
 RAW_BASE="https://raw.githubusercontent.com/rndnaame/nfqws-menu/main"
@@ -590,7 +590,8 @@ fix_isp_interface() {
     warn "Не удалось определить интерфейс провайдера (route/ip route)."
     return 1
   fi
-  current=$(grep -E '^ISP_INTERFACE=' "$conf" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"')
+  # tr -d '\r"' — иначе CRLF из .conf даёт \r и ломает вывод (" переезжает в начало строки)
+  current=$(grep -E '^ISP_INTERFACE=' "$conf" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '\r"' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
   info "Интерфейс провайдера (default route): $detected"
   [ -n "$current" ] && info "В конфиге сейчас: ISP_INTERFACE=\"$current\""
   if [ "$current" = "$detected" ]; then
