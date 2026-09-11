@@ -225,6 +225,8 @@ menu
 
 ### 10. dpi-detector
 
+Инструмент для анализа цензуры трафика в России: обнаруживает и классифицирует блокировки сайтов, хостингов и CDN (TCP16–20 блокировки), а также подмену DNS-запросов провайдером.
+
 Актуальная версия [dpi-detector](https://github.com/Runnin4ik/dpi-detector) (ветка `rust`):
 
 ```bash
@@ -235,7 +237,9 @@ curl -fsSL https://raw.githubusercontent.com/Runnin4ik/dpi-detector/rust/install
 
 ### 11. awg-manager
 
-Установщик [awg-compressed](https://github.com/rndnaame/awg-compressed) (AmneziaWG manager):
+Веб-интерфейс для управления AmneziaWG VPN-туннелями на роутерах Keenetic. В тестовом режиме добавлена поддержка Sing-box (vless tcp, hysteria, trojan и др.).
+
+Установщик [awg-compressed](https://github.com/rndnaame/awg-compressed):
 
 ```bash
 curl -sL https://raw.githubusercontent.com/rndnaame/awg-compressed/main/install-compressed.sh | sh
@@ -245,12 +249,16 @@ curl -sL https://raw.githubusercontent.com/rndnaame/awg-compressed/main/install-
 
 ### 12. KeenKit
 
+Многофункциональный скрипт, упрощающий взаимодействие с роутером на базе KeeneticOS.
+
 - Есть `/opt/keenkit.sh` — **сразу запускает**.
 - Иначе — установщик [KeenKit](https://github.com/spatiumstas/KeenKit).
 
 ### 13. TG WS Proxy Go
 
-Установка / обновление [tg-ws-proxy](https://github.com/spatiumstas/tg-ws-proxy-go).
+Локальный MTProto-прокси для Telegram Desktop, который ускоряет работу Telegram, перенаправляя трафик через WebSocket-соединения. Данные передаются в том же зашифрованном виде, а для работы не нужны сторонние серверы.
+
+Установка / обновление [tg-ws-proxy](https://github.com/spatiumstas/tg-ws-proxy-go):
 
 - Уже установлен → `opkg update && opkg upgrade tg-ws-proxy`
 - Не установлен → репозиторий feedly + `opkg install tg-ws-proxy`
@@ -265,7 +273,9 @@ Init: `/opt/etc/init.d/S99tg-ws-proxy` (start / stop / status / restart)
 
 ### 14. usque-keenetic
 
-Установка / обновление [usque-keenetic](https://side-effect-tm.github.io/usque-keenetic/).
+Адаптация неофициального клиента Cloudflare WARP с режимом MASQUE для роутеров Keenetic / Netcraze.
+
+Установка / обновление [usque-keenetic](https://side-effect-tm.github.io/usque-keenetic/):
 
 - **Не установлен** — репозиторий под архитектуру + установка:
 
@@ -288,7 +298,9 @@ IFACE="opkgtun0"
 
 ### 15. MagiTrickle
 
-Установка / обновление [MagiTrickle](http://bin.magitrickle.dev/).
+Утилита для точечной маршрутизации сетевого трафика по заданным доменным именам.
+
+Установка / обновление [MagiTrickle](http://bin.magitrickle.dev/):
 
 - **Не установлен** — добавление репозитория (`add_repo.sh`) + `opkg install magitrickle` + `S99magitrickle start`
 - **Установлен** → `opkg update && opkg install magitrickle` + restart сервиса
