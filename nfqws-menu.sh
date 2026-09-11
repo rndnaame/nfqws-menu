@@ -10,7 +10,7 @@
 
 set -e
 
-SCRIPT_VERSION="0.6.15"
+SCRIPT_VERSION="0.6.18"
 
 REPO_URL="https://github.com/rndnaame/nfqws-menu"
 RAW_BASE="https://raw.githubusercontent.com/rndnaame/nfqws-menu/main"
@@ -897,31 +897,50 @@ update_rkn_list() {
 
   local conf="/opt/etc/nfqws2/nfqws2.conf"
   local tmp="/tmp/nfqws-rkn-$$.txt" cleaned="/tmp/nfqws-rkn-clean-$$.txt" count
+  local skip_download=0 need_restart=0
 
-  info "Скачивание rkn.list (zapret4rocket) ..."
-  info "URL: $RKN_LIST_URL"
-  if ! download_file "$RKN_LIST_URL" "$tmp"; then
-    error "Не удалось скачать список."
-    rm -f "$tmp"
-    return 1
+  # Если rkn.list уже есть — спросить об обновлении (по умолчанию: Нет)
+  if [ -f "$RKN_LIST_DEST" ]; then
+    local existing_count
+    existing_count=$(grep -vE '^[[:space:]]*(#|;|$)' "$RKN_LIST_DEST" 2>/dev/null | grep -cve '^$' || echo 0)
+    info "Файл уже существует: $RKN_LIST_DEST ($existing_count записей)"
+    if ! confirm_no "Обновить rkn.list?"; then
+      info "Обновление списка пропущено."
+      skip_download=1
+    fi
   fi
 
-  grep -vE '^[[:space:]]*(#|;|$)' "$tmp" | sed 's/[[:space:]]*$//' | grep -vE '^$' > "$cleaned" || true
-  count=$(wc -l < "$cleaned" 2>/dev/null | tr -d ' ')
-  if [ -z "$count" ] || [ "$count" = "0" ]; then
-    error "Скачанный файл пуст или не содержит записей."
+  if [ "$skip_download" -eq 0 ]; then
+    info "Скачивание rkn.list (zapret4rocket) ..."
+    info "URL: $RKN_LIST_URL"
+    if ! download_file "$RKN_LIST_URL" "$tmp"; then
+      error "Не удалось скачать список."
+      rm -f "$tmp"
+      return 1
+    fi
+
+    grep -vE '^[[:space:]]*(#|;|$)' "$tmp" | sed 's/[[:space:]]*$//' | grep -vE '^$' > "$cleaned" || true
+    count=$(wc -l < "$cleaned" 2>/dev/null | tr -d ' ')
+    if [ -z "$count" ] || [ "$count" = "0" ]; then
+      error "Скачанный файл пуст или не содержит записей."
+      rm -f "$tmp" "$cleaned"
+      return 1
+    fi
+    info "Записей в списке: $count"
+
+    mkdir -p "$(dirname "$RKN_LIST_DEST")"
+    cp "$cleaned" "$RKN_LIST_DEST"
+    info "Записано: $RKN_LIST_DEST ($count строк)"
     rm -f "$tmp" "$cleaned"
-    return 1
+    need_restart=1
   fi
-  info "Записей в списке: $count"
-
-  mkdir -p "$(dirname "$RKN_LIST_DEST")"
-  cp "$cleaned" "$RKN_LIST_DEST"
-  info "Записано: $RKN_LIST_DEST ($count строк)"
-  rm -f "$tmp" "$cleaned"
 
   if [ ! -f "$conf" ]; then
     warn "Конфиг не найден: $conf — MODE_LIST не обновлён."
+    if [ "$need_restart" -eq 1 ]; then
+      service_restart /opt/etc/init.d/S51nfqws2
+      info "Сервис nfqws2 перезапущен."
+    fi
     return 0
   fi
 
@@ -934,6 +953,7 @@ update_rkn_list() {
     sed -i "s|^\\(MODE_LIST=\"[^\"]*\\)\"|\\1 ${RKN_HOSTLIST_ARG}\"|" "$conf"
     if grep -qF -- "$RKN_HOSTLIST_ARG" "$conf" 2>/dev/null; then
       warn "В MODE_LIST добавлено: $RKN_HOSTLIST_ARG"
+      need_restart=1
     else
       warn "Не удалось изменить MODE_LIST автоматически — добавьте вручную:"
       warn "  MODE_LIST=\"... $RKN_HOSTLIST_ARG\""
@@ -942,10 +962,15 @@ update_rkn_list() {
     backup_file "$conf"
     printf '\nMODE_LIST="--hostlist=/opt/etc/nfqws2/lists/user.list %s"\n' "$RKN_HOSTLIST_ARG" >> "$conf"
     info "MODE_LIST создан с user.list и rkn.list"
+    need_restart=1
   fi
 
-  service_restart /opt/etc/init.d/S51nfqws2
-  info "Сервис nfqws2 перезапущен."
+  if [ "$need_restart" -eq 1 ]; then
+    service_restart /opt/etc/init.d/S51nfqws2
+    info "Сервис nfqws2 перезапущен."
+  else
+    info "Изменений нет — перезапуск сервиса не требуется."
+  fi
 }
 
 # ---------------------------------------------------------------------------
@@ -2073,93 +2098,84 @@ nfqws_blobs_dir() {
 
 # map_file: name|basename
 # list_file: idx|section|name|basename
+# Один проход awk: секции + --blob= + fake:blob= (без grep/fork на каждую строку)
 parse_fake_blobs() {
   local conf="$1"
   local map_file="$2"
   local list_file="$3"
-  local cur_sec="?" in_quote=0 line name path base
-  local seen_file="/tmp/nfqws-fakeblob-seen-$$"
-  local raw_file="/tmp/nfqws-fakeblob-raw-$$"
 
   : > "$map_file"
   : > "$list_file"
-  : > "$seen_file"
-  : > "$raw_file"
+  [ -f "$conf" ] || return 1
 
-  # 1) Маппинг --blob=name:path
-  tr ' \t' '\n' < "$conf" 2>/dev/null | grep -E '^--blob=' | while IFS= read -r tok; do
-    name=${tok#--blob=}
-    name=${name%%:*}
-    path=${tok#--blob=${name}:}
-    path=${path#@}
-    # убрать хвост кавычек/мусор от закрытия multiline
-    path=$(printf '%s' "$path" | tr -d '"'"'"'')
-    case "$path" in
-      0x*|0X*) base="(hex)" ;;
-      *) base=$(basename "$path" 2>/dev/null) ;;
-    esac
-    base=$(printf '%s' "$base" | tr -d '"'"'"'')
-    [ -n "$name" ] && [ -n "$base" ] && printf '%s|%s\n' "$name" "$base"
-  done | sort -u > "$map_file"
+  # BusyBox/mawk-совместимый однопроходный разбор
+  awk -v mapf="$map_file" -v listf="$list_file" '
+  function basename(p,   n, a) {
+    gsub(/["\047]/, "", p)
+    if (p ~ /^0[xX]*/) return "(hex)"
+    n = split(p, a, "/")
+    return (n > 0 && a[n] != "") ? a[n] : p
+  }
+  BEGIN {
+    cur = "?"
+    idx = 0
+  }
+  {
+    line = $0
 
-  # 2) Построчный обход: секция + fake:blob=
-  while IFS= read -r line || [ -n "$line" ]; do
-    case "$line" in
-      NFQWS_BASE_ARGS=\"*|NFQWS_ARGS=\"*|NFQWS_ARGS_QUIC=\"*|NFQWS_ARGS_UDP=\"*|NFQWS_ARGS_CUSTOM=\"*|NFQWS_EXTRA_ARGS=\"*)
-        cur_sec=${line%%=*}
-        in_quote=1
-        case "$line" in
-          *\")
-            # однострочный VAR="..." — всё ещё ищем fake на этой строке
-            ;;
-        esac
-        ;;
-      NFQWS_BASE_ARGS=|NFQWS_ARGS=|NFQWS_ARGS_QUIC=|NFQWS_ARGS_UDP=|NFQWS_ARGS_CUSTOM=|NFQWS_EXTRA_ARGS=)
-        cur_sec=${line%%=*}
-        in_quote=0
-        ;;
-    esac
+    # Секции NFQWS_*ARGS*
+    if (match(line, /^(NFQWS_BASE_ARGS|NFQWS_ARGS_QUIC|NFQWS_ARGS_UDP|NFQWS_ARGS_CUSTOM|NFQWS_EXTRA_ARGS|NFQWS_ARGS)=/)) {
+      cur = substr(line, 1, RLENGTH - 1)
+    }
 
-    if echo "$line" | grep -q 'fake:blob='; then
-      echo "$line" | grep -oE 'fake:blob=[^:[:space:]"]+' 2>/dev/null | while IFS= read -r fb; do
-        name=${fb#fake:blob=}
-        case "$name" in
-          0x*|0X*|'') continue ;;
-        esac
-        if grep -qxF "$name" "$seen_file" 2>/dev/null; then
-          continue
-        fi
-        echo "$name" >> "$seen_file"
-        base=$(grep -E "^${name}\|" "$map_file" 2>/dev/null | head -1 | cut -d'|' -f2)
-        [ -z "$base" ] && base="(нет --blob= / встроенный)"
-        printf '%s|%s|%s\n' "$cur_sec" "$name" "$base" >> "$raw_file"
-      done
-    fi
+    # Токены --blob=name:path (пробелы/табы как разделители)
+    n = split(line, tok, /[ \t]+/)
+    for (i = 1; i <= n; i++) {
+      if (tok[i] ~ /^--blob=/) {
+        rest = substr(tok[i], 8)   # после --blob=
+        colon = index(rest, ":")
+        if (colon < 1) continue
+        name = substr(rest, 1, colon - 1)
+        path = substr(rest, colon + 1)
+        sub(/^@/, "", path)
+        gsub(/["\047]/, "", path)
+        if (name == "") continue
+        base = basename(path)
+        if (!(name in blobmap)) {
+          blobmap[name] = base
+          # порядок map не важен — пишем в END
+        }
+      }
+    }
 
-    if [ "$in_quote" -eq 1 ]; then
-      case "$line" in
-        NFQWS_*ARGS*=\"*) ;;
-        *\")
-          in_quote=0
-          ;;
-      esac
-    fi
-  done < "$conf"
-
-  # Нумерация уникальных имён (первое появление)
-  local idx=0
-  : > "$list_file"
-  while IFS='|' read -r sec name base; do
-    [ -z "$name" ] && continue
-    if grep -qE "\|${name}\|" "$list_file" 2>/dev/null; then
-      continue
-    fi
-    idx=$((idx + 1))
-    printf '%s|%s|%s|%s\n' "$idx" "$sec" "$name" "$base" >> "$list_file"
-  done < "$raw_file"
-
-  rm -f "$raw_file" "$seen_file"
-  [ "$idx" -gt 0 ]
+    # fake:blob=NAME (не hex) — basename резолвим в END (после всего map)
+    if (index(line, "fake:blob=") == 0) next
+    tmp = line
+    while (match(tmp, /fake:blob=[^: \t"]+/)) {
+      fb = substr(tmp, RSTART, RLENGTH)
+      name = substr(fb, 11)   # после fake:blob=
+      tmp = substr(tmp, RSTART + RLENGTH)
+      if (name == "" || name ~ /^0[xX]/) continue
+      if (name in seen) continue
+      seen[name] = 1
+      idx++
+      order[idx] = name
+      sec[name] = cur
+    }
+  }
+  END {
+    for (name in blobmap)
+      print name "|" blobmap[name] > mapf
+    close(mapf)
+    for (i = 1; i <= idx; i++) {
+      name = order[i]
+      base = (name in blobmap) ? blobmap[name] : "(нет --blob= / встроенный)"
+      print i "|" sec[name] "|" name "|" base > listf
+    }
+    close(listf)
+    exit (idx > 0 ? 0 : 1)
+  }
+  ' "$conf"
 }
 
 list_repo_blobs() {
