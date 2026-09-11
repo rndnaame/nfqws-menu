@@ -10,7 +10,7 @@
 
 set -e
 
-SCRIPT_VERSION="0.6.12"
+SCRIPT_VERSION="0.6.15"
 
 REPO_URL="https://github.com/rndnaame/nfqws-menu"
 RAW_BASE="https://raw.githubusercontent.com/rndnaame/nfqws-menu/main"
@@ -318,7 +318,7 @@ proc_running() {
 # kind: nfqws|nfqws2|web|usque|tg-ws-proxy → 1 если «запущен»
 service_is_up() {
   case "$1" in
-    nfqws|nfqws2|usque|tg-ws-proxy) proc_running "$1" ;;
+    nfqws|nfqws2|usque|tg-ws-proxy|magitrickle) proc_running "$1" ;;
     web)
       port_is_open 90 || proc_running lighttpd
       ;;
@@ -354,6 +354,7 @@ show_installed() {
   print_pkg_info "nfqws-keenetic-web" "web"         && shown=1
   print_pkg_info "usque-keenetic"     "usque"       && shown=1
   print_pkg_info "tg-ws-proxy"        "tg-ws-proxy" && shown=1
+  print_pkg_info "magitrickle"        "magitrickle" && shown=1
 
   if [ -x /opt/bin/dpi-detector ] || command -v dpi-detector >/dev/null 2>&1; then
     local dpi_bin dpi_ver=""
@@ -397,7 +398,7 @@ show_installed() {
       svc=$(echo "$base" | sed 's/^S[0-9][0-9]//')
       [ -n "$svc" ] || continue
       case "$svc" in
-        nfqws|nfqws2|lighttpd|usque|tg-ws-proxy) continue ;;
+        nfqws|nfqws2|lighttpd|usque|tg-ws-proxy|magitrickle) continue ;;
         awg-manager)
           is_installed "awg-manager" || [ -d /opt/etc/awg-manager ] && continue
           ;;
@@ -1875,6 +1876,52 @@ IFACE="opkgtun0"
 EOF
 }
 
+menu_magitrickle() {
+  echo
+  info "MagiTrickle"
+  refresh_opkg_cache
+
+  if is_installed "magitrickle"; then
+    info "Пакет установлен — обновление..."
+    opkg update
+    opkg install magitrickle
+    if [ -x /opt/etc/init.d/S99magitrickle ]; then
+      /opt/etc/init.d/S99magitrickle restart
+      info "Сервис перезапущен: /opt/etc/init.d/S99magitrickle restart"
+    else
+      warn "Init-скрипт /opt/etc/init.d/S99magitrickle не найден."
+    fi
+    info "Обновление завершено."
+  else
+    info "Пакет не установлен — установка..."
+    confirm_yes "Добавить репозиторий MagiTrickle и установить пакет?" || { info "Отменено."; return 0; }
+    info "Добавление репозитория..."
+    if command -v wget >/dev/null 2>&1; then
+      wget -qO- http://bin.magitrickle.dev/packages/add_repo.sh | sh || return 1
+    elif command -v curl >/dev/null 2>&1; then
+      curl -fsSL http://bin.magitrickle.dev/packages/add_repo.sh | sh || return 1
+    else
+      error "Нужны wget или curl."
+      return 1
+    fi
+    opkg update
+    opkg install magitrickle
+    if [ -x /opt/etc/init.d/S99magitrickle ]; then
+      /opt/etc/init.d/S99magitrickle start
+      info "Сервис запущен: /opt/etc/init.d/S99magitrickle start"
+    else
+      warn "Init-скрипт /opt/etc/init.d/S99magitrickle не найден."
+    fi
+    info "Установка завершена."
+  fi
+
+  echo
+  printf '%s\n' "${BOLD}Управление сервисом${NC}"
+  cat << 'EOF'
+/opt/etc/init.d/S99magitrickle (start | stop | restart | status)
+EOF
+}
+
 # ---------------------------------------------------------------------------
 # 88. Удаление
 # ---------------------------------------------------------------------------
@@ -1974,6 +2021,43 @@ remove_keenkit() {
     info "KeenKit удалён."
   else
     warn "KeenKit не найден (/opt/keenkit.sh)."
+  fi
+}
+
+remove_magitrickle() {
+  if is_installed "magitrickle"; then
+    [ -x /opt/etc/init.d/S99magitrickle ] && /opt/etc/init.d/S99magitrickle stop 2>/dev/null || true
+    opkg remove magitrickle 2>/dev/null || opkg remove --autoremove magitrickle 2>/dev/null || true
+    info "magitrickle удалён."
+  else
+    warn "magitrickle не установлен."
+  fi
+  if [ -f /opt/etc/opkg/magitrickle.conf ]; then
+    echo
+    if confirm_no "Удалить репозиторий MagiTrickle (/opt/etc/opkg/magitrickle.conf)?"; then
+      rm -f /opt/etc/opkg/magitrickle.conf && info "  удалён: /opt/etc/opkg/magitrickle.conf"
+    else
+      info "Репозиторий MagiTrickle оставлен."
+    fi
+  fi
+}
+
+remove_opera_proxy() {
+  if is_installed "opera-proxy"; then
+    [ -x /opt/etc/init.d/S99opera-proxy ] && /opt/etc/init.d/S99opera-proxy stop 2>/dev/null || true
+    [ -x /opt/etc/init.d/S80opera-proxy ] && /opt/etc/init.d/S80opera-proxy stop 2>/dev/null || true
+    opkg remove opera-proxy 2>/dev/null || opkg remove --autoremove opera-proxy 2>/dev/null || true
+    info "opera-proxy удалён."
+  else
+    warn "opera-proxy не установлен."
+  fi
+  if [ -f /opt/etc/opkg/sw.ext.io.conf ]; then
+    echo
+    if confirm_no "Удалить репозиторий opera-proxy (/opt/etc/opkg/sw.ext.io.conf)?"; then
+      rm -f /opt/etc/opkg/sw.ext.io.conf && info "  удалён: /opt/etc/opkg/sw.ext.io.conf"
+    else
+      info "Репозиторий opera-proxy оставлен."
+    fi
   fi
 }
 
@@ -2301,6 +2385,8 @@ menu_remove() {
   printf '%s\n' "${BOLD}Что удалить?${NC}"
   echo
 
+  refresh_opkg_cache
+
   local items="" p i=1 target idx
   is_installed "nfqws-keenetic"     && items="$items nfqws-keenetic"
   is_installed "nfqws2-keenetic"    && items="$items nfqws2-keenetic"
@@ -2309,6 +2395,8 @@ menu_remove() {
   is_awg_manager_installed          && items="$items awg-manager"
   is_installed "tg-ws-proxy"        && items="$items tg-ws-proxy"
   is_installed "usque-keenetic"     && items="$items usque-keenetic"
+  is_installed "magitrickle"        && items="$items magitrickle"
+  is_installed "opera-proxy"        && items="$items opera-proxy"
   [ -f /opt/keenkit.sh ]            && items="$items KeenKit"
 
   if [ -n "$items" ]; then
@@ -2349,6 +2437,8 @@ menu_remove() {
         awg-manager)   remove_awg_manager ;;
         tg-ws-proxy)   remove_tg_ws_proxy ;;
         usque-keenetic) remove_usque_keenetic ;;
+        magitrickle)   remove_magitrickle ;;
+        opera-proxy)   remove_opera_proxy ;;
         KeenKit)       remove_keenkit ;;
         *)
           opkg remove --autoremove "$target"
@@ -2391,6 +2481,7 @@ main_menu() {
     echo "      12. KeenKit"
     echo "      13. TG WS Proxy Go"
     echo "      14. usque-keenetic"
+    echo "      15. MagiTrickle"
     echo
     printf '%s\n' "${CYAN}${BOLD}[::]  ${LBL_REMOVE}${NC}"
     echo "      77. $LBL_77"
@@ -2417,6 +2508,7 @@ main_menu() {
       12) menu_keenkit || true ;;
       13) menu_tg_ws_proxy || true ;;
       14) menu_usque_keenetic || true ;;
+      15) menu_magitrickle || true ;;
       77) menu_change_language; continue ;;
       88) menu_remove || true ;;
       99) update_self || true ;;
