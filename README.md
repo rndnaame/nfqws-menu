@@ -4,7 +4,7 @@
 
 Репозиторий также служит хранилищем готовых **стратегий** обхода DPI, **blobs** и **lists**.
 
-- Скрипт: [`nfqws-menu.sh`](nfqws-menu.sh) (текущая версия **0.5.17**)
+- Скрипт: [`nfqws-menu.sh`](nfqws-menu.sh) (текущая версия **0.6.15**)
 - Стратегии: [`strategies/`](strategies/)
 
 ### Официальные проекты
@@ -56,14 +56,13 @@ menu
 
 При запуске скрипт:
 
-1. Выставляет `LD_LIBRARY_PATH` для Entware; вызовы `ndmc` идут через `ndmc_cli` (системные библиотеки).
-2. Определяет архитектуру процессора (`aarch64` / `mipsel` / `mips` …) — с кэшированием.
-3. Показывает **только установленные** компоненты (версии и статус):
-   - пакеты NFQWS / web;
+1. Определяет архитектуру процессора (`aarch64` / `mipsel` / `mips` …) — с кэшированием.
+2. Показывает **только установленные** компоненты (версии и статус):
+   - пакеты NFQWS / web, usque-keenetic, tg-ws-proxy, magitrickle;
    - dpi-detector, awg-manager (`[+SB]` при наличии sing-box), KeenKit;
    - другие сервисы из `/opt/etc/init.d/`;
    - **⚡** — сервис запущен.
-4. Предлагает меню:
+3. Предлагает меню:
 
 ```
 [::]  КОМПОНЕНТЫ
@@ -73,8 +72,11 @@ menu
 [::]  СТРАТЕГИИ/СПИСКИ
       3.  Выбор стратегии
       4.  Обновить IPSet List
-      5.  Обход блокировки DoT/DoH
-      6.  Управление DoT/DoH
+      5.  Загрузить rkn.list (125k+ доменов)
+      6.  Обход блокировки DoT/DoH
+      7.  Смена активных fake:blob
+
+      9.  Управление DoT/DoH
 
 [::]  УТИЛИТЫ
       10. dpi-detector
@@ -82,6 +84,7 @@ menu
       12. KeenKit
       13. TG WS Proxy Go
       14. usque-keenetic
+      15. MagiTrickle
 
 [::]  СЕРВИС
       77. Change language
@@ -100,6 +103,7 @@ menu
   dpi-detector           5.0.0-alpha.6
   awg-manager [+SB]      2.18.0
   KeenKit                2.8.7
+  magitrickle            ...
 ```
 
 ### 1. Установка NFQWS / NFQWS2
@@ -156,15 +160,34 @@ menu
 
 Бэкап, очистка пустых строк/комментариев, перезапуск сервиса. При двух установленных версиях — можно обновить обе.
 
-### 5. Обход блокировки DoT/DoH
+### 5. Загрузить rkn.list (125k+ доменов)
+
+Только при установленном **nfqws2-keenetic**.
+
+- Скачивает большой список доменов РКН из [IndeecFOX/zapret4rocket](https://github.com/IndeecFOX/zapret4rocket)  
+  (`extra_strats/TCP/RKN/List.txt`).
+- Записывает в `/opt/etc/nfqws2/lists/rkn.list`.
+- Добавляет `--hostlist=/opt/etc/nfqws2/lists/rkn.list` в `MODE_LIST` конфига (с бэкапом), если его ещё нет.
+- Перезапускает `S51nfqws2`.
+
+### 6. Обход блокировки DoT/DoH
 
 Только при установленном **nfqws2-keenetic**.
 
 Добавляет в `NFQWS_ARGS_CUSTOM` стратегию обхода блокировок публичных DoT/DoH DNS (Cloudflare, Google, AdGuard, NextDNS, Quad9 и др.), при необходимости добавляет порт `853` в `TCP_PORTS` / `UDP_PORTS`, перезапускает `S51nfqws2`.
 
-### 6. Управление DoT/DoH
+### 7. Смена активных fake:blob
 
-Управление DNS-over-TLS / DNS-over-HTTPS на стороне **Keenetic** через `ndmc` (`ndmc_cli` — с системным `LD_LIBRARY_PATH`).
+Позволяет заменить используемые в конфиге `fake:blob=NAME` на другой `.bin`-файл.
+
+- Парсит конфиг (v1 или v2), находит все `fake:blob=` и соответствующие `--blob=name:path`.
+- Показывает список найденных имён по секциям (`NFQWS_ARGS`, `NFQWS_ARGS_CUSTOM` и т.д.).
+- Предлагает локальные файлы из каталога blobs и файлы из репозитория `strategies/blobs/`.
+- При выборе файла из репозитория — скачивает его, обновляет путь в `--blob=…`, перезапускает сервис.
+
+### 9. Управление DoT/DoH
+
+Управление DNS-over-TLS / DNS-over-HTTPS на стороне **Keenetic** через `ndmc`.
 
 Подменю:
 
@@ -181,7 +204,18 @@ menu
 - Просмотр текущих DoT/DoH и персональных привязок к доменам
 - Счётчик слотов **N/8** — только секция **System** (Policy0/1 и `*-filters` не учитываются)
 - Пресеты (Яндекс, Cloudflare, Quad9, CleanBrowsing, OpenDNS, DNS.SB, dns0.eu, OpenNameServer, японские DNS, Proxy-DNS и др.) или ручной ввод
-- Быстрая привязка доменов (instagram.com, rutor, ntc.party и свой вариант)
+- Быстрая привязка доменов (пресеты):
+
+| № | Описание |
+|---|----------|
+| 1 | CleanBrowsing DoT → instagram.com |
+| 2 | CleanBrowsing DoH → instagram.com |
+| 3 | sw.ext.io DoT → rutor.is & rutor.info |
+| 4 | Malw Link DoH → ntc.party |
+| 5 | Xbox-DNS DoT → gql.twitch.tv & usher.ttvnw.net |
+| 6 | Xbox-DNS DoH → gql.twitch.tv & usher.ttvnw.net |
+| 7 | Ввести свой домен и выбрать сервер |
+
 - Удаление upstream-ов с сохранением конфигурации
 
 > Нужен `ndmc` (CLI Keenetic/Netcraze).  
@@ -250,6 +284,15 @@ opkg install usque-keenetic
 IFACE="opkgtun0"
 ```
 
+### 15. MagiTrickle
+
+Установка / обновление [MagiTrickle](http://bin.magitrickle.dev/).
+
+- **Не установлен** — добавление репозитория (`add_repo.sh`) + `opkg install magitrickle` + `S99magitrickle start`
+- **Установлен** → `opkg update && opkg install magitrickle` + restart сервиса
+- Init: `/opt/etc/init.d/S99magitrickle` (start | stop | restart | status)
+- Удаление — в п. 88 (с опциональным удалением `/opt/etc/opkg/magitrickle.conf`)
+
 ### 77. Change language
 
 Мгновенное переключение интерфейса **ru ↔ en** (файл `/opt/etc/nfqws-menu.lang`).
@@ -260,15 +303,12 @@ IFACE="opkgtun0"
 
 ```
 Удаление:
-  1) nfqws2-keenetic
-  2) nfqws-keenetic-web
-  3) dpi-detector
-  4) awg-manager
-  5) tg-ws-proxy
-  6) usque-keenetic
-  a) Удалить все пакеты NFQWS
-  b) Удалить резервные копии (.bak.* / *-opkg)
-  0) Назад
+  [N] nfqws2-keenetic / nfqws-keenetic-web / dpi-detector /
+      awg-manager / tg-ws-proxy / usque-keenetic /
+      magitrickle / opera-proxy / KeenKit
+  [a] Удалить все пакеты NFQWS
+  [b] Удалить резервные копии (.bak.* / *-opkg)
+  [0] Назад
 ```
 
 - Пакеты NFQWS — `opkg remove --autoremove`
@@ -276,6 +316,8 @@ IFACE="opkgtun0"
 - **awg-manager** — `opkg remove` + `rm -rf /opt/etc/awg-manager`
 - **tg-ws-proxy** — `opkg remove` + запрос на удаление `/opt/etc/opkg/feedly.conf`
 - **usque-keenetic** — `opkg remove --autoremove` + `/opt/etc/opkg/usque-keenetic.conf`
+- **magitrickle** — `opkg remove` + запрос на удаление `/opt/etc/opkg/magitrickle.conf`
+- **KeenKit** — удаление `/opt/keenkit.sh`
 - **a)** — все пакеты NFQWS + dpi-detector
 - **b)** — `*.bak.*`, `*.conf-opkg`, `*.list-opkg` в `/opt/etc/nfqws/`, `/opt/etc/nfqws2/`, `/opt/etc/nfqws2/lists/`
 
@@ -286,6 +328,20 @@ IFACE="opkgtun0"
 ---
 
 ## Changelog
+
+### 0.6.15
+
+- Актуальная версия скрипта (см. `SCRIPT_VERSION` в `nfqws-menu.sh`)
+
+### 0.6.x (основные изменения относительно 0.5.x)
+
+- **п. 5** — загрузка **rkn.list** (125k+ доменов, zapret4rocket) + автодобавление в `MODE_LIST`
+- **п. 7** — смена активных **fake:blob** (локальные + из репозитория)
+- **п. 15** — **MagiTrickle** (установка/обновление/удаление)
+- **п. 9** (бывш. 6) — Управление DoT/DoH: пресеты Xbox-DNS DoT/DoH для Twitch (`gql.twitch.tv`, `usher.ttvnw.net`)
+- Нумерация пунктов стратегий/списков: 5 = rkn.list, 6 = DoT/DoH bypass, 7 = fake:blob, 9 = Manage DoT/DoH
+- Статус: отображение magitrickle; удаление opera-proxy / KeenKit / MagiTrickle в п. 88
+- Без принудительного `export LD_LIBRARY_PATH` (совместимость ndmc / Entware wget)
 
 ### 0.5.17
 
@@ -311,8 +367,8 @@ IFACE="opkgtun0"
 
 ### 0.4.0 → 0.5.x
 
-- **Управление DoT/DoH** (п. 6) через `ndmc`
-- Утилиты: awg-manager (11), KeenKit (12); удаление — п. 88
+- **Управление DoT/DoH** через `ndmc`
+- Утилиты: awg-manager, KeenKit; удаление — п. 88
 - Быстрый запуск `menu`, статус только установленного, ⚡, кэш opkg/процессов
 - Переключение языка (п. 77)
 
@@ -362,6 +418,7 @@ nfqws-menu/
 /opt/etc/init.d/S51nfqws2 status         # v2
 /opt/etc/init.d/S99tg-ws-proxy status    # TG WS Proxy
 /opt/etc/init.d/S51usque status          # usque
+/opt/etc/init.d/S99magitrickle status    # MagiTrickle
 
 # Порт веб-интерфейса
 netstat -lnt | grep ':90'
@@ -371,6 +428,7 @@ netstat -lnt | grep ':90'
 /opt/etc/init.d/S51nfqws2 restart
 /opt/etc/init.d/S99tg-ws-proxy restart
 /opt/etc/init.d/S51usque restart
+/opt/etc/init.d/S99magitrickle restart
 
 # Информация о пакете
 opkg info nfqws-keenetic
@@ -378,6 +436,7 @@ opkg info nfqws2-keenetic
 opkg info nfqws-keenetic-web
 opkg info tg-ws-proxy
 opkg info usque-keenetic
+opkg info magitrickle
 
 # Конфиги
 vi /opt/etc/nfqws/nfqws.conf
