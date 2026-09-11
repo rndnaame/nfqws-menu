@@ -1,4 +1,5 @@
-146.75.22.132 objects.githubusercontent.com
+#githubusercontent
+146.75.22.132 objects..com
 146.75.22.132 raw.githubusercontent.com
 146.75.22.132 release-assets.githubusercontent.com
 146.75.22.132 private-user-images.githubusercontent.com
@@ -34,8 +35,8 @@
 2606:50c0:8000::154 avatars8.githubusercontent.com
 2606:50c0:8000::154 camo.githubusercontent.com
 2606:50c0:8000::154 cloud.githubusercontent.com
-
-149.154.167.220 my.telegram.org
+#telegram
+149.154.167.220 my..org
 149.154.167.220 desktop.telegram.org
 149.154.167.220 macos.telegram.org
 149.154.167.220 oauth.telegram.org
@@ -70,8 +71,8 @@
 149.154.167.220 zws2-1.web.telegram.org
 149.154.167.220 zws2.web.telegram.org
 149.154.167.220 zws4-1.web.telegram.org
-
-162.159.138.232 discord.com
+#discord
+162.159.138.232 .com
 162.159.137.232 discord.com
 162.159.128.233 discord.com
 162.159.135.232 discord.com
@@ -79,3 +80,7 @@
 162.159.137.232 updates.discord.com
 162.159.128.233 updates.discord.com
 162.159.135.232 updates.discord.com
+#rutor
+172.66.159.63 rutor.info
+172.66.159.63 rutor.is
+172.66.159.63 d.rutor.info
