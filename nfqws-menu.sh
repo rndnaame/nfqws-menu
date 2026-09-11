@@ -10,7 +10,7 @@
 
 set -e
 
-SCRIPT_VERSION="0.6.20"
+SCRIPT_VERSION="0.6.21"
 
 REPO_URL="https://github.com/rndnaame/nfqws-menu"
 RAW_BASE="https://raw.githubusercontent.com/rndnaame/nfqws-menu/main"
@@ -88,6 +88,7 @@ ui_apply_lang() {
       LBL_6="Управление DoT/DoH"
       LBL_7="Загрузить rkn.list (125k+ доменов)"
       LBL_7F="Смена активных fake:blob"
+      LBL_8="Обновление hosts"
       LBL_77="Change language"
       LBL_88="Удаление пакетов"
       LBL_99="Обновить скрипт"
@@ -117,6 +118,7 @@ ui_apply_lang() {
       LBL_6="Manage DoT/DoH"
       LBL_7="Download rkn.list (125k+ domains)"
       LBL_7F="Change active fake:blob"
+      LBL_8="Update hosts"
       LBL_77="Change language"
       LBL_88="Remove packages"
       LBL_99="Update this script"
@@ -1701,6 +1703,150 @@ menu_dns_manage() {
 }
 
 # ---------------------------------------------------------------------------
+# 8. Обновление hosts (статические записи ip host через ndmc)
+# ---------------------------------------------------------------------------
+menu_update_hosts() {
+  if ! command -v ndmc >/dev/null 2>&1; then
+    error "ndmc не найден. Функция доступна только на Keenetic/Netcraze OS."
+    return 1
+  fi
+
+  local hosts_url="${RAW_BASE}/hosts"
+  local tmp="/tmp/nfqws-hosts-$$.txt"
+  local sec_file="/tmp/nfqws-hosts-sec-$$.txt"
+
+  info "Загрузка hosts..."
+  if ! download_file "$hosts_url" "$tmp"; then
+    error "Не удалось загрузить $hosts_url"
+    return 1
+  fi
+
+  # Секции = строки, начинающиеся с # (без пустых)
+  awk '/^#/ {
+    name = $0
+    sub(/^#+[ \t]*/, "", name)
+    gsub(/[ \t\r]+$/, "", name)
+    if (name != "") print name
+  }' "$tmp" > "$sec_file"
+
+  if [ ! -s "$sec_file" ]; then
+    error "В файле hosts нет секций (комментариев #...)"
+    rm -f "$tmp" "$sec_file"
+    return 1
+  fi
+
+  local n_sec
+  n_sec=$(wc -l < "$sec_file" | tr -d ' ')
+
+  echo
+  printf '%s\n' "${BOLD}Какие записи добавить в hosts (можно несколько через запятую или все)?${NC}"
+  local i=1
+  while IFS= read -r sec || [ -n "$sec" ]; do
+    printf ' %s) #%s\n' "$i" "$sec"
+    i=$((i + 1))
+  done < "$sec_file"
+  local all_num=$i
+  printf ' %s) все\n' "$all_num"
+  printf ' 0) Отмена\n'
+  printf '%s\n' "${DIM}────────────────────────────────────────────────────────${NC}"
+  ask "Выберите варианты: "
+  read -r raw_choices
+
+  [ -z "$raw_choices" ] || [ "$raw_choices" = "0" ] && {
+    rm -f "$tmp" "$sec_file"
+    return 0
+  }
+
+  # Нормализуем выбор: запятые/пробелы → список номеров
+  local choices selected_all=0
+  choices=$(echo "$raw_choices" | tr ',;' '  ' | tr -s ' ')
+
+  for c in $choices; do
+    case "$c" in
+      "$all_num"|all|все|ALL) selected_all=1; break ;;
+    esac
+  done
+
+  # Список выбранных имён секций
+  local selected_secs=""
+  if [ "$selected_all" -eq 1 ]; then
+    selected_secs=$(cat "$sec_file")
+  else
+    for c in $choices; do
+      case "$c" in
+        *[!0-9]*) continue ;;
+      esac
+      [ "$c" -ge 1 ] 2>/dev/null && [ "$c" -le "$n_sec" ] 2>/dev/null || continue
+      local name
+      name=$(sed -n "${c}p" "$sec_file")
+      [ -n "$name" ] && selected_secs="$selected_secs
+$name"
+    done
+  fi
+
+  selected_secs=$(printf '%s\n' "$selected_secs" | sed '/^$/d')
+  if [ -z "$selected_secs" ]; then
+    warn "Ничего не выбрано."
+    rm -f "$tmp" "$sec_file"
+    return 0
+  fi
+
+  local pairs="/tmp/nfqws-hosts-pairs-$$.txt"
+  : > "$pairs"
+
+  # Собираем все IP\tDOMAIN из выбранных секций (без pipe-subshell)
+  local sec
+  for sec in $selected_secs; do
+    [ -z "$sec" ] && continue
+    info "Секция: #$sec"
+    awk -v sec="$sec" '
+      BEGIN { insec=0 }
+      /^#/ {
+        name = $0
+        sub(/^#+[ \t]*/, "", name)
+        gsub(/[ \t\r]+$/, "", name)
+        insec = (name == sec) ? 1 : 0
+        next
+      }
+      insec && NF >= 2 {
+        ip = $1
+        domain = $2
+        if (domain == "" || domain == "." || domain ~ /^\.+$/) next
+        print ip "\t" domain
+      }
+    ' "$tmp" >> "$pairs"
+  done
+
+  if [ ! -s "$pairs" ]; then
+    warn "В выбранных секциях нет валидных записей IP DOMAIN."
+    rm -f "$tmp" "$sec_file" "$pairs"
+    return 0
+  fi
+
+  local added=0 failed=0
+  local ip domain cmd
+  while IFS="$(printf '\t')" read -r ip domain || [ -n "$ip" ]; do
+    [ -z "$ip" ] || [ -z "$domain" ] && continue
+    cmd="ip host $domain $ip"
+    printf '%s\n' "${CYAN}  ndmc -c \"$cmd\"${NC}"
+    if ndmc -c "$cmd" > /dev/null 2>&1; then
+      added=$((added + 1))
+    else
+      warn "  ошибка: $domain → $ip"
+      failed=$((failed + 1))
+    fi
+  done < "$pairs"
+
+  info "Добавлено: $added, ошибок: $failed"
+  if [ "$added" -gt 0 ] || [ "$failed" -gt 0 ]; then
+    dns_save_config
+  fi
+
+  rm -f "$tmp" "$sec_file" "$pairs"
+  info "Готово."
+}
+
+# ---------------------------------------------------------------------------
 # 99. Обновить скрипт
 # ---------------------------------------------------------------------------
 resolve_script_path() {
@@ -2496,7 +2642,7 @@ main_menu() {
     echo "      5.  $LBL_7"
     echo "      6.  $LBL_5"
     echo "      7.  $LBL_7F"
-    echo
+    echo "      8.  $LBL_8"
     echo "      9.  $LBL_6"
     echo
     printf '%s\n' "${CYAN}${BOLD}[::]  ${LBL_UTILS}${NC}"
@@ -2526,6 +2672,7 @@ main_menu() {
       5)  update_rkn_list || true ;;
       6)  menu_dot_doh || true ;;
       7)  menu_change_fake_blob || true ;;
+      8)  menu_update_hosts || true ;;
       9)  menu_dns_manage || true ;;
       10) menu_dpi_detector || true ;;
       11) menu_awg_manager || true ;;
