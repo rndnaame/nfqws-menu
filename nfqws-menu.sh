@@ -1747,6 +1747,7 @@ menu_update_hosts() {
   done < "$sec_file"
   local all_num=$i
   printf ' %s) все\n' "$all_num"
+  printf ' %s88) удалить записи из hosts%s\n' "$RED" "$NC"
   printf ' 0) Отмена\n'
   printf '%s\n' "${DIM}────────────────────────────────────────────────────────${NC}"
   ask "Выберите варианты: "
@@ -1756,6 +1757,58 @@ menu_update_hosts() {
     rm -f "$tmp" "$sec_file"
     return 0
   }
+
+  # 88 — удалить все домены из hosts-файла
+  local want_delete=0
+  for c in $(echo "$raw_choices" | tr ',;' '  '); do
+    [ "$c" = "88" ] && want_delete=1 && break
+  done
+  if [ "$want_delete" -eq 1 ]; then
+    local domains="/tmp/nfqws-hosts-dom-$$.txt"
+    awk '
+      /^#/ { next }
+      NF >= 2 {
+        domain = $2
+        if (domain == "" || domain == "." || domain ~ /^\.+$/) next
+        if (!(domain in seen)) {
+          seen[domain] = 1
+          print domain
+        }
+      }
+    ' "$tmp" > "$domains"
+
+    if [ ! -s "$domains" ]; then
+      warn "В файле hosts нет доменов для удаления."
+      rm -f "$tmp" "$sec_file" "$domains"
+      return 0
+    fi
+
+    if ! confirm_no "Удалить все домены из hosts ($(wc -l < "$domains" | tr -d ' ') шт.)?"; then
+      rm -f "$tmp" "$sec_file" "$domains"
+      return 0
+    fi
+
+    local removed=0 failed=0 domain cmd
+    while IFS= read -r domain || [ -n "$domain" ]; do
+      [ -z "$domain" ] && continue
+      cmd="no ip host $domain"
+      printf '%s\n' "${CYAN}  ndmc -c \"$cmd\"${NC}"
+      if ndmc -c "$cmd" > /dev/null 2>&1; then
+        removed=$((removed + 1))
+      else
+        warn "  ошибка: $domain"
+        failed=$((failed + 1))
+      fi
+    done < "$domains"
+
+    info "Удалено: $removed, ошибок: $failed"
+    if [ "$removed" -gt 0 ] || [ "$failed" -gt 0 ]; then
+      dns_save_config
+    fi
+    rm -f "$tmp" "$sec_file" "$domains"
+    info "Готово."
+    return 0
+  fi
 
   # Нормализуем выбор: запятые/пробелы → список номеров
   local choices selected_all=0
