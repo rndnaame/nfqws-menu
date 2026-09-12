@@ -10,7 +10,7 @@
 
 set -e
 
-SCRIPT_VERSION="0.6.22"
+SCRIPT_VERSION="0.6.23"
 
 REPO_URL="https://github.com/rndnaame/nfqws-menu"
 RAW_BASE="https://raw.githubusercontent.com/rndnaame/nfqws-menu/main"
@@ -892,28 +892,31 @@ update_ipset_list() {
 }
 
 # ---------------------------------------------------------------------------
-# 5. rkn.list (zapret4rocket) → nfqws2 lists + MODE_LIST
+# 5. rkn.list (zapret4rocket) → lists + MODE_LIST (nfqws v1 / nfqws2)
 # ---------------------------------------------------------------------------
 RKN_LIST_URL="https://raw.githubusercontent.com/IndeecFOX/zapret4rocket/refs/heads/master/extra_strats/TCP/RKN/List.txt"
-RKN_LIST_DEST="/opt/etc/nfqws2/lists/rkn.list"
-RKN_HOSTLIST_ARG="--hostlist=/opt/etc/nfqws2/lists/rkn.list"
 
 update_rkn_list() {
-  refresh_opkg_cache
-  if ! is_installed "nfqws2-keenetic"; then
-    error "Пункт доступен только при установленном nfqws2-keenetic."
-    return 1
-  fi
+  need_nfqws_installed || return
+  pick_nfqws_ver 1 || return
 
-  local conf="/opt/etc/nfqws2/nfqws2.conf"
   local tmp="/tmp/nfqws-rkn-$$.txt" cleaned="/tmp/nfqws-rkn-clean-$$.txt" count
-  local skip_download=0 need_restart=0
+  local skip_download=0
 
-  # Если rkn.list уже есть — спросить об обновлении (по умолчанию: Нет)
-  if [ -f "$RKN_LIST_DEST" ]; then
+  # Проверяем существующие файлы (любая из выбранных версий)
+  local check_dest=""
+  case "$NFQWS_VER" in
+    1)   check_dest="/opt/etc/nfqws/rkn.list" ;;
+    2)   check_dest="/opt/etc/nfqws2/lists/rkn.list" ;;
+    both) check_dest="/opt/etc/nfqws2/lists/rkn.list"
+          [ -f "/opt/etc/nfqws/rkn.list" ] && check_dest="/opt/etc/nfqws/rkn.list"
+          ;;
+  esac
+
+  if [ -n "$check_dest" ] && [ -f "$check_dest" ]; then
     local existing_count
-    existing_count=$(grep -vE '^[[:space:]]*(#|;|$)' "$RKN_LIST_DEST" 2>/dev/null | grep -cve '^$' || echo 0)
-    info "Файл уже существует: $RKN_LIST_DEST ($existing_count записей)"
+    existing_count=$(grep -vE '^[[:space:]]*(#|;|$)' "$check_dest" 2>/dev/null | grep -cve '^$' || echo 0)
+    info "Файл уже существует: $check_dest ($existing_count записей)"
     if ! confirm_no "Обновить rkn.list?"; then
       info "Обновление списка пропущено."
       skip_download=1
@@ -937,50 +940,86 @@ update_rkn_list() {
       return 1
     fi
     info "Записей в списке: $count"
-
-    mkdir -p "$(dirname "$RKN_LIST_DEST")"
-    cp "$cleaned" "$RKN_LIST_DEST"
-    info "Записано: $RKN_LIST_DEST ($count строк)"
-    rm -f "$tmp" "$cleaned"
-    need_restart=1
   fi
 
-  if [ ! -f "$conf" ]; then
-    warn "Конфиг не найден: $conf — MODE_LIST не обновлён."
-    if [ "$need_restart" -eq 1 ]; then
-      service_restart /opt/etc/init.d/S51nfqws2
-      info "Сервис nfqws2 перезапущен."
-    fi
-    return 0
-  fi
+  # Применить к выбранной версии (или обеим)
+  apply_rkn_for_ver() {
+    local ver="$1"
+    local dest hostlist_arg conf init_script user_list need_restart=0
 
-  # -- перед паттерном: иначе grep воспринимает --hostlist=... как свою опцию
-  if grep -qF -- "$RKN_HOSTLIST_ARG" "$conf" 2>/dev/null; then
-    info "MODE_LIST уже содержит $RKN_HOSTLIST_ARG"
-  elif grep -qE '^MODE_LIST=' "$conf" 2>/dev/null; then
-    backup_file "$conf"
-    # Вставляем --hostlist=...rkn.list перед закрывающей кавычкой MODE_LIST="..."
-    sed -i "s|^\\(MODE_LIST=\"[^\"]*\\)\"|\\1 ${RKN_HOSTLIST_ARG}\"|" "$conf"
-    if grep -qF -- "$RKN_HOSTLIST_ARG" "$conf" 2>/dev/null; then
-      warn "В MODE_LIST добавлено: $RKN_HOSTLIST_ARG"
+    case "$ver" in
+      1)
+        dest="/opt/etc/nfqws/rkn.list"
+        hostlist_arg="--hostlist=/opt/etc/nfqws/rkn.list"
+        conf="/opt/etc/nfqws/nfqws.conf"
+        init_script="/opt/etc/init.d/S51nfqws"
+        user_list="/opt/etc/nfqws/user.list"
+        ;;
+      2)
+        dest="/opt/etc/nfqws2/lists/rkn.list"
+        hostlist_arg="--hostlist=/opt/etc/nfqws2/lists/rkn.list"
+        conf="/opt/etc/nfqws2/nfqws2.conf"
+        init_script="/opt/etc/init.d/S51nfqws2"
+        user_list="/opt/etc/nfqws2/lists/user.list"
+        ;;
+      *) return 1 ;;
+    esac
+
+    if [ "$skip_download" -eq 0 ]; then
+      mkdir -p "$(dirname "$dest")"
+      cp "$cleaned" "$dest"
+      info "Записано: $dest ($count строк)"
       need_restart=1
-    else
-      warn "Не удалось изменить MODE_LIST автоматически — добавьте вручную:"
-      warn "  MODE_LIST=\"... $RKN_HOSTLIST_ARG\""
     fi
-  else
-    backup_file "$conf"
-    printf '\nMODE_LIST="--hostlist=/opt/etc/nfqws2/lists/user.list %s"\n' "$RKN_HOSTLIST_ARG" >> "$conf"
-    info "MODE_LIST создан с user.list и rkn.list"
-    need_restart=1
-  fi
 
-  if [ "$need_restart" -eq 1 ]; then
-    service_restart /opt/etc/init.d/S51nfqws2
-    info "Сервис nfqws2 перезапущен."
-  else
-    info "Изменений нет — перезапуск сервиса не требуется."
-  fi
+    if [ ! -f "$conf" ]; then
+      warn "Конфиг не найден: $conf — MODE_LIST не обновлён."
+      if [ "$need_restart" -eq 1 ]; then
+        service_restart "$init_script"
+        info "Сервис перезапущен ($init_script)."
+      fi
+      return 0
+    fi
+
+    # -- перед паттерном: иначе grep воспринимает --hostlist=... как свою опцию
+    if grep -qF -- "$hostlist_arg" "$conf" 2>/dev/null; then
+      info "MODE_LIST уже содержит $hostlist_arg"
+    elif grep -qE '^MODE_LIST=' "$conf" 2>/dev/null; then
+      backup_file "$conf"
+      # Вставляем --hostlist=...rkn.list перед закрывающей кавычкой MODE_LIST="..."
+      sed -i "s|^\\(MODE_LIST=\"[^\"]*\\)\"|\\1 ${hostlist_arg}\"|" "$conf"
+      if grep -qF -- "$hostlist_arg" "$conf" 2>/dev/null; then
+        warn "В MODE_LIST добавлено: $hostlist_arg"
+        need_restart=1
+      else
+        warn "Не удалось изменить MODE_LIST автоматически — добавьте вручную:"
+        warn "  MODE_LIST=\"... $hostlist_arg\""
+      fi
+    else
+      backup_file "$conf"
+      printf '\nMODE_LIST="--hostlist=%s %s"\n' "$user_list" "$hostlist_arg" >> "$conf"
+      info "MODE_LIST создан с user.list и rkn.list"
+      need_restart=1
+    fi
+
+    if [ "$need_restart" -eq 1 ]; then
+      service_restart "$init_script"
+      info "Сервис перезапущен ($init_script)."
+    else
+      info "Изменений нет — перезапуск сервиса не требуется (v$ver)."
+    fi
+  }
+
+  case "$NFQWS_VER" in
+    1)   apply_rkn_for_ver 1 ;;
+    2)   apply_rkn_for_ver 2 ;;
+    both)
+      apply_rkn_for_ver 1
+      apply_rkn_for_ver 2
+      ;;
+  esac
+
+  rm -f "$tmp" "$cleaned"
 }
 
 # ---------------------------------------------------------------------------
