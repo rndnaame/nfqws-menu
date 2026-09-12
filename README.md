@@ -4,24 +4,25 @@
 
 Репозиторий также служит хранилищем готовых **стратегий** обхода DPI, **blobs** и **lists**.
 
-- Скрипт: [`nfqws-menu.sh`](nfqws-menu.sh) (текущая версия **0.6.22**)
+- Скрипт: [`nfqws-menu.sh`](nfqws-menu.sh) (текущая версия **0.6.25**)
 - Стратегии: [`strategies/`](strategies/)
+- Hosts: [`hosts`](hosts)
 
 ### Официальные проекты
 
 | Пакет | Репозиторий |
-|-------|-------------|
+| --- | --- |
 | nfqws-keenetic (v1) | https://github.com/nfqws/nfqws-keenetic |
 | nfqws2-keenetic (v2) | https://github.com/nfqws/nfqws2-keenetic |
 | Веб-интерфейс | https://github.com/nfqws/nfqws-keenetic-web |
 
 ### Источник стратегий
 
-Стратегии в этом репозитории сделаны на базе проекта  
-**[Flowseal/zapret-discord-youtube](https://github.com/Flowseal/zapret-discord-youtube)**  
+Стратегии в этом репозитории сделаны на базе проекта\
+[**Flowseal/zapret-discord-youtube**](https://github.com/Flowseal/zapret-discord-youtube)\
 и адаптированы под формат конфигов `nfqws-keenetic` / `nfqws2-keenetic`.
 
-Подготовлены пользователем **[@Nare51](https://github.com/Nare51)** с использованием искусственного интеллекта.
+Подготовлены пользователем [**@Nare51**](https://github.com/Nare51) с использованием искусственного интеллекта.
 
 ---
 
@@ -33,7 +34,7 @@
 opkg update && opkg install curl && curl -sSL https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/nfqws-menu.sh -o /opt/nfqws-menu.sh && sh /opt/nfqws-menu.sh
 ```
 
-или c wget:
+или с wget:
 
 ```bash
 wget -O /opt/nfqws-menu.sh https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/nfqws-menu.sh && chmod +x /opt/nfqws-menu.sh && sh /opt/nfqws-menu.sh
@@ -140,19 +141,19 @@ menu
 
 #### Обновление lists
 
-По запросу обновляет из `strategies/lists/`: `user.list`, `exclude.list`, `ipset.list`, `ipset_exclude.list`.  
+По запросу обновляет из `strategies/lists/`: `user.list`, `exclude.list`, `ipset.list`, `ipset_exclude.list`.\
 `auto.list` **не трогается** — его заполняет демон.
 
 После всех шагов соответствующий сервис перезапускается.
 
 ### 4. Обновление IPSet List
 
-Скачивает актуальный IP/CIDR-список из  
-[Flowseal/zapret-discord-youtube](https://github.com/Flowseal/zapret-discord-youtube)  
+Скачивает актуальный IP/CIDR-список из\
+[Flowseal/zapret-discord-youtube](https://github.com/Flowseal/zapret-discord-youtube)\
 и записывает в `ipset.list`:
 
 | Версия | Путь |
-|--------|------|
+| --- | --- |
 | nfqws-keenetic (v1) | `/opt/etc/nfqws/ipset.list` |
 | nfqws2-keenetic (v2) | `/opt/etc/nfqws2/lists/ipset.list` |
 
@@ -160,14 +161,16 @@ menu
 
 ### 5. Загрузить rkn.list (125k+ доменов)
 
-Только при установленном **nfqws2-keenetic**.
+Доступно при установленном **nfqws-keenetic** (v1) и/или **nfqws2-keenetic** (v2). При обеих версиях — выбор: 1 / 2 / обе.
 
-- Если `/opt/etc/nfqws2/lists/rkn.list` **уже есть** — спрашивает, обновлять ли список (**по умолчанию: Нет**). При отказе скачивание пропускается.
+- Если `rkn.list` уже есть — показывает размер в **КБ** (без медленного подсчёта 125k строк) и спрашивает, обновлять ли список (**по умолчанию: Нет**). При отказе скачивание пропускается.
 - Скачивает большой список доменов РКН из [IndeecFOX/zapret4rocket](https://github.com/IndeecFOX/zapret4rocket)  
   (`extra_strats/TCP/RKN/List.txt`).
-- Записывает в `/opt/etc/nfqws2/lists/rkn.list`.
-- Добавляет `--hostlist=/opt/etc/nfqws2/lists/rkn.list` в `MODE_LIST` конфига (с бэкапом), если его ещё нет.
-- **Перезапуск** `S51nfqws2` только при реальных изменениях (обновлён список и/или изменён `MODE_LIST`). Если hostlist уже был в конфиге и список не обновляли — перезапуск не выполняется.
+- Записывает:
+  - **v1** → `/opt/etc/nfqws/rkn.list`
+  - **v2** → `/opt/etc/nfqws2/lists/rkn.list`
+- Добавляет `--hostlist=…/rkn.list` в `MODE_LIST` соответствующего конфига (с бэкапом), если его ещё нет. Вставка через **awk** (устойчиво к CRLF, пробелам, пустым кавычкам).
+- **Перезапуск** сервиса (`S51nfqws` / `S51nfqws2`) только при реальных изменениях (обновлён список и/или изменён `MODE_LIST`). Если hostlist уже был в конфиге и список не обновляли — перезапуск не выполняется.
 
 ### 6. Обход блокировки DoT/DoH
 
@@ -181,7 +184,7 @@ menu
 
 - Быстрый разбор конфига (v1/v2) одним проходом **awk**: секции `NFQWS_*ARGS*`, map `--blob=name:path`, уникальные `fake:blob=` (hex пропускаются).
 - Показывает список найденных имён по секциям.
-- Предлагает локальные `.bin` из каталога blobs и файлы из репозитория `strategies/blobs/` (кэш списка API ~1 ч).
+- Предлагает локальные `.bin` из каталога blobs и файлы из репозитория `strategies/blobs/` (кэш списка API \~1 ч).
 - При выборе файла из репозитория — скачивает его, обновляет `--blob=…`, бэкап конфига.
 - Перезапуск сервиса — по подтверждению (по умолчанию Да).
 
@@ -189,9 +192,11 @@ menu
 
 Запись статических DNS-привязок на стороне **Keenetic** через `ndmc` (`ip host DOMAIN IP` / `no ip host DOMAIN` + сохранение конфигурации).
 
-- Скачивает файл [`hosts`](https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/hosts) из репозитория.
+- Скачивает файл [`hosts`](hosts) из репозитория.
 - Секции задаются комментариями `# Имя секции`; внутри — строки `IP DOMAIN`.
 - Можно выбрать одну или несколько секций, **все**, либо **88** — удалить домены из hosts-файла.
+- Только **IPv4**; битые домены (`..`, ведущая `.`) пропускаются; **один IP на домен**.
+- Предупреждение, если уникальных записей **> 64** (лимит Keenetic `ip host`).
 - Нужен `ndmc` (только Keenetic / Netcraze OS).
 
 ### 9. Управление DoT/DoH
@@ -216,7 +221,7 @@ menu
 - Быстрая привязка доменов (пресеты):
 
 | № | Описание |
-|---|----------|
+| --- | --- |
 | 1 | CleanBrowsing DoT → instagram.com |
 | 2 | CleanBrowsing DoH → instagram.com |
 | 3 | sw.ext.io DoT → rutor.is & rutor.info |
@@ -227,7 +232,7 @@ menu
 
 - Удаление upstream-ов с сохранением конфигурации
 
-> Нужен `ndmc` (CLI Keenetic/Netcraze).  
+> Нужен `ndmc` (CLI Keenetic/Netcraze).\
 > При активном **Интернет-фильтре** часть DoT может помечаться как *disregarded*.
 
 ### 10. dpi-detector
@@ -240,7 +245,7 @@ menu
 curl -fsSL https://raw.githubusercontent.com/Runnin4ik/dpi-detector/rust/install.sh | sh
 ```
 
-Если бинарник уже есть (`/opt/bin/dpi-detector`) — сразу запускает его.
+Если бинарник уже есть (`/opt/bin/dpi-detector`) — очищает дубликаты (`/tmp`, `/opt/root`) и сразу запускает его. После установки — та же очистка дубликатов.
 
 ### 11. awg-manager
 
@@ -275,7 +280,7 @@ curl -fsSL https://raw.githubusercontent.com/spatiumstas/feedly/main/add-repo.sh
 opkg install tg-ws-proxy
 ```
 
-Конфиги: `/opt/etc/tg-ws-proxy/config.conf`, `secret.conf`  
+Конфиги: `/opt/etc/tg-ws-proxy/config.conf`, `secret.conf`\
 Init: `/opt/etc/init.d/S99tg-ws-proxy` (start / stop / status / restart)
 
 ### 14. usque-keenetic
@@ -350,6 +355,12 @@ IFACE="opkgtun0"
 
 ## Changelog
 
+### 0.6.23 – 0.6.25
+
+- **п. 5** — поддержка **v1 и v2** (выбор 1 / 2 / обе); размер существующего `rkn.list` в КБ вместо подсчёта строк
+- **п. 5** — вставка в `MODE_LIST` через **awk** (CRLF, пустые кавычки, пробелы)
+- **п. 10** — очистка дубликатов `dpi-detector` (`/tmp`, `/opt/root`) перед запуском / после установки
+
 ### 0.6.22
 
 - **п. 8** — только IPv4; пропуск битых доменов (`..`, ведущая `.`); один IP на домен; предупреждение при >64 записей (лимит Keenetic)
@@ -421,6 +432,7 @@ IFACE="opkgtun0"
 ```
 nfqws-menu/
 ├── nfqws-menu.sh          # Главный скрипт меню
+├── hosts                  # Секции IP DOMAIN для п. 8 (ndmc ip host)
 ├── README.md
 └── strategies/
     ├── blobs/             # Бинарные шаблоны (*.bin)
@@ -445,7 +457,7 @@ nfqws-menu/
 ## Требования (Keenetic / Netcraze)
 
 1. Установлен **Entware** (внутренняя память или USB).
-2. В веб-интерфейсе — **модули ядра Netfilter** (`OPKG → Kernel modules for Netfilter`).  
+2. В веб-интерфейсе — **модули ядра Netfilter** (`OPKG → Kernel modules for Netfilter`).\
    На старых прошивках компонент появляется после включения IPv6.
 3. Рекомендуется отключить DNS провайдера и настроить DoT/DoH.
 4. Команды выполняются **в среде Entware**, не в CLI Keenetic.
@@ -503,9 +515,9 @@ menu
 
 ## Лицензия / отказ от ответственности
 
-Материалы подготовлены в ознакомительных и научно-технических целях.  
+Материалы подготовлены в ознакомительных и научно-технических целях.\
 Использование на свой страх и риск. Автор не несёт ответственности за последствия.
 
-Стратегии адаптированы на основе [Flowseal/zapret-discord-youtube](https://github.com/Flowseal/zapret-discord-youtube),  
-подготовлены [@Nare51](https://github.com/Nare51) с использованием искусственного интеллекта.  
+Стратегии адаптированы на основе [Flowseal/zapret-discord-youtube](https://github.com/Flowseal/zapret-discord-youtube),\
+подготовлены [@Nare51](https://github.com/Nare51) с использованием искусственного интеллекта.\
 Официальные пакеты NFQWS: [nfqws](https://github.com/nfqws).
