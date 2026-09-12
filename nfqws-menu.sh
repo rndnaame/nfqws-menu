@@ -10,7 +10,7 @@
 
 set -e
 
-SCRIPT_VERSION="0.6.25"
+SCRIPT_VERSION="0.6.26"
 
 REPO_URL="https://github.com/rndnaame/nfqws-menu"
 RAW_BASE="https://raw.githubusercontent.com/rndnaame/nfqws-menu/main"
@@ -168,25 +168,33 @@ confirm_no() {
   return 1
 }
 
-# Скачать URL в stdout (curl предпочтительнее)
+# Скачать URL в stdout (curl → wget fallback; curl может быть сломан из‑за libnghttp2 и т.п.)
 fetch_url() {
   if command -v curl >/dev/null 2>&1; then
-    curl -fsSL "$1"
-  elif command -v wget >/dev/null 2>&1; then
+    curl -fsSL "$1" 2>/dev/null && return 0
+  fi
+  if command -v wget >/dev/null 2>&1; then
     wget -qO- "$1"
   else
     return 1
   fi
 }
 
-# Скачать URL в файл
+# Скачать URL в файл (curl → wget fallback)
 download_file() {
   local url="$1" dest="$2"
   mkdir -p "$(dirname "$dest")"
   if command -v curl >/dev/null 2>&1; then
-    curl -fsSL -H 'Cache-Control: no-cache' -H 'Pragma: no-cache' "$url" -o "$dest"
-  else
+    if curl -fsSL -H 'Cache-Control: no-cache' -H 'Pragma: no-cache' "$url" -o "$dest" 2>/dev/null; then
+      return 0
+    fi
+    # curl есть, но упал (часто: libnghttp2.so.14 / OpenSSL) — пробуем wget
+    rm -f "$dest"
+  fi
+  if command -v wget >/dev/null 2>&1; then
     wget -qO "$dest" --no-cache "$url" 2>/dev/null || wget -qO "$dest" "$url"
+  else
+    return 1
   fi
 }
 
@@ -194,8 +202,11 @@ download_file() {
 run_remote_sh() {
   local url="$1"
   if command -v curl >/dev/null 2>&1; then
-    curl -fsSL "$url" | sh
-  elif command -v wget >/dev/null 2>&1; then
+    if curl -fsSL "$url" 2>/dev/null | sh; then
+      return 0
+    fi
+  fi
+  if command -v wget >/dev/null 2>&1; then
     wget -qO- "$url" | sh
   else
     error "Нужны curl или wget."
