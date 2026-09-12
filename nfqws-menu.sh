@@ -10,7 +10,7 @@
 
 set -e
 
-SCRIPT_VERSION="0.6.23"
+SCRIPT_VERSION="0.6.25"
 
 REPO_URL="https://github.com/rndnaame/nfqws-menu"
 RAW_BASE="https://raw.githubusercontent.com/rndnaame/nfqws-menu/main"
@@ -914,9 +914,16 @@ update_rkn_list() {
   esac
 
   if [ -n "$check_dest" ] && [ -f "$check_dest" ]; then
-    local existing_count
-    existing_count=$(grep -vE '^[[:space:]]*(#|;|$)' "$check_dest" 2>/dev/null | grep -cve '^$' || echo 0)
-    info "Файл уже существует: $check_dest ($existing_count записей)"
+    # Не считаем 125k строк через grep — на роутере это долго.
+    # Размер в КБ (мгновенно); точный count — только после скачивания.
+    local existing_kb
+    existing_kb=$(wc -c < "$check_dest" 2>/dev/null | tr -d ' ')
+    if [ -n "$existing_kb" ] && [ "$existing_kb" -gt 0 ] 2>/dev/null; then
+      existing_kb=$((existing_kb / 1024))
+    else
+      existing_kb="?"
+    fi
+    info "Файл уже существует: $check_dest (${existing_kb} КБ)"
     if ! confirm_no "Обновить rkn.list?"; then
       info "Обновление списка пропущено."
       skip_download=1
@@ -984,16 +991,46 @@ update_rkn_list() {
     # -- перед паттерном: иначе grep воспринимает --hostlist=... как свою опцию
     if grep -qF -- "$hostlist_arg" "$conf" 2>/dev/null; then
       info "MODE_LIST уже содержит $hostlist_arg"
-    elif grep -qE '^MODE_LIST=' "$conf" 2>/dev/null; then
+    elif grep -qE '^[[:space:]]*MODE_LIST=' "$conf" 2>/dev/null; then
       backup_file "$conf"
-      # Вставляем --hostlist=...rkn.list перед закрывающей кавычкой MODE_LIST="..."
-      sed -i "s|^\\(MODE_LIST=\"[^\"]*\\)\"|\\1 ${hostlist_arg}\"|" "$conf"
+      # Вставляем --hostlist=...rkn.list перед закрывающей кавычкой.
+      # awk надёжнее busybox sed (пробелы, пустые кавычки, CRLF, single quotes).
+      local tmp_conf="/tmp/nfqws-mode-$$.conf"
+      awk -v arg="$hostlist_arg" '
+        BEGIN { done=0 }
+        /^[[:space:]]*MODE_LIST=/ && !done {
+          line=$0
+          sub(/\r$/, "", line)
+          # MODE_LIST="content"  → MODE_LIST="content arg"  (или пустые кавычки)
+          if (match(line, /^[[:space:]]*MODE_LIST="/)) {
+            prefix = substr(line, 1, RSTART+RLENGTH-1)  # включая открывающую "
+            rest = substr(line, RSTART+RLENGTH)
+            # rest = content..."
+            if (match(rest, /"/)) {
+              content = substr(rest, 1, RSTART-1)
+              gsub(/[ \t]+$/, "", content)
+              if (content == "")
+                print prefix arg "\""
+              else
+                print prefix content " " arg "\""
+            } else {
+              print line " " arg
+            }
+          } else {
+            print line " " arg
+          }
+          done=1
+          next
+        }
+        { print }
+      ' "$conf" > "$tmp_conf" && mv "$tmp_conf" "$conf"
       if grep -qF -- "$hostlist_arg" "$conf" 2>/dev/null; then
         warn "В MODE_LIST добавлено: $hostlist_arg"
         need_restart=1
       else
         warn "Не удалось изменить MODE_LIST автоматически — добавьте вручную:"
         warn "  MODE_LIST=\"... $hostlist_arg\""
+        rm -f "$tmp_conf"
       fi
     else
       backup_file "$conf"
