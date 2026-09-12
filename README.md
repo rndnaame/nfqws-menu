@@ -36,7 +36,7 @@ chmod +x /opt/nfqws-menu.sh
 sh /opt/nfqws-menu.sh
 ```
 
-или одной строкой:
+или c wget:
 
 ```bash
 wget -O /opt/nfqws-menu.sh https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/nfqws-menu.sh && chmod +x /opt/nfqws-menu.sh && sh /opt/nfqws-menu.sh
