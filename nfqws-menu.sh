@@ -10,7 +10,7 @@
 
 set -e
 
-SCRIPT_VERSION="0.6.69"
+SCRIPT_VERSION="0.6.70"
 
 REPO_URL="https://github.com/rndnaame/nfqws-menu"
 RAW_BASE="https://raw.githubusercontent.com/rndnaame/nfqws-menu/main"
@@ -727,7 +727,6 @@ show_installed() {
   print_pkg_info "nfqws2-keenetic"    "nfqws2"      && shown=1
   print_pkg_info "nfqws-keenetic-web" "web"         && shown=1
   print_pkg_info "usque-keenetic"     "usque"       && shown=1
-  print_pkg_info "tg-ws-proxy"        "tg-ws-proxy" && shown=1
   if is_tg_ws_proxy_rs_installed; then
     local rs_ver
     rs_ver=$(tg_ws_proxy_rs_version)
@@ -3087,77 +3086,6 @@ menu_keenkit() {
   info "Установщик KeenKit завершил работу."
 }
 
-# Feedly opkg-архитектура для tg-ws-proxy (spatiumstas/feedly)
-# aarch64-3.10 | armv7-3.2 | mips-3.4 | mipsel-3.4
-feedly_arch() {
-  local raw
-  raw=$(opkg print-architecture 2>/dev/null | sort -k3 -nr | awk '$2!="all"{print $2;exit}')
-  case "$raw" in
-    aarch64-3.10|armv7-3.2|mips-3.4|mipsel-3.4) echo "$raw" ;;
-    aarch64*|arm64*) echo "aarch64-3.10" ;;
-    armv7*|arm*)     echo "armv7-3.2" ;;
-    mipsel*)         echo "mipsel-3.4" ;;
-    mips*)           echo "mips-3.4" ;;
-    *)               echo "" ;;
-  esac
-}
-
-menu_tg_ws_proxy() {
-  echo
-  info "TG WS Proxy Go (tg-ws-proxy)"
-  if is_installed "tg-ws-proxy"; then
-    opkg_install_or_upgrade tg-ws-proxy
-  else
-    info "Пакет не установлен — установка..."
-    local farch
-    farch=$(feedly_arch)
-    if [ -z "$farch" ]; then
-      error "Неподдерживаемая архитектура для tg-ws-proxy (нужны: aarch64-3.10, armv7-3.2, mips-3.4, mipsel-3.4)."
-      error "Определено: $(opkg print-architecture 2>/dev/null | tr '\n' ' ')"
-      return 1
-    fi
-    info "Архитектура feedly: $farch"
-    # Репозиторий spatiumstas/feedly (тот же, что add-repo.sh)
-    ensure_opkg_repo "feedly_${farch}" "https://spatiumstas.github.io/feedly/${farch}" || {
-      error "Не удалось добавить репозиторий feedly. Проверьте доступ к github.io (DPI?)."
-      return 1
-    }
-    if ! opkg install tg-ws-proxy; then
-      error "opkg install tg-ws-proxy не удался."
-      warn "Проверьте: opkg update && opkg list | grep tg-ws"
-      warn "Или установите вручную IPK из https://github.com/spatiumstas/tg-ws-proxy-go/releases"
-      warn "  (файл вида tg-ws-proxy_*-entware_${farch}.ipk)"
-      return 1
-    fi
-    refresh_opkg_cache
-    if is_installed "tg-ws-proxy"; then
-      info "Установка завершена: $(pkg_version tg-ws-proxy)"
-    else
-      error "Пакет после установки не найден в opkg list-installed."
-      return 1
-    fi
-  fi
-  echo
-  printf '%s\n' "${BOLD}Дополнительная информация:${NC}"
-  cat << 'EOF'
-# Entware (KeeneticOS):
-#   /opt/etc/tg-ws-proxy/config.conf
-#   /opt/etc/tg-ws-proxy/secret.conf
-https://github.com/spatiumstas/tg-ws-proxy-go
-
-SECRET должен быть строкой из 32 hex-символов. Если оставить пустым, он будет автоматически сгенерирован при запуске.
-DC_IP_DEFAULT и DC_IP_DEFAULT_POOL — глобальные значения по умолчанию для DC (2,4).
-EXTRA_ARGS используется для переопределений по DC и дополнительных флагов, см. CFProxy.
-Полный список доступных команд: --help.
-FAKE_TLS_DOMAIN включает режим Fake TLS (ee secret link). Оставьте пустым для стандартного режима dd.
-CFPROXY_DOMAINS — локальный список fallback-доменов.
-CFPROXY_DOMAINS_URL — значение по умолчанию/зеркало
-
-# Entware (KeeneticOS)
-/opt/etc/init.d/S99tg-ws-proxy (start / stop / status / restart)
-EOF
-}
-
 # ---------------------------------------------------------------------------
 # TG WS Proxy (Rust) — установка, подбор параметров и сквозная проверка
 # ---------------------------------------------------------------------------
@@ -4117,23 +4045,6 @@ remove_awg_manager() {
   info "awg-manager удалён."
 }
 
-remove_tg_ws_proxy() {
-  if is_installed "tg-ws-proxy"; then
-    opkg remove tg-ws-proxy 2>/dev/null || opkg remove --autoremove tg-ws-proxy 2>/dev/null || true
-    info "tg-ws-proxy удалён."
-  else
-    warn "tg-ws-proxy не установлен."
-  fi
-  if [ -f /opt/etc/opkg/feedly.conf ]; then
-    echo
-    if confirm_no "Удалить репозиторий feedly (/opt/etc/opkg/feedly.conf)?"; then
-      rm -f /opt/etc/opkg/feedly.conf && info "  удалён: /opt/etc/opkg/feedly.conf"
-    else
-      info "Репозиторий feedly оставлен."
-    fi
-  fi
-}
-
 remove_usque_keenetic() {
   if is_installed "usque-keenetic"; then
     opkg remove --autoremove usque-keenetic 2>/dev/null || true
@@ -4531,7 +4442,6 @@ menu_remove() {
   is_installed "nfqws-keenetic-web" && items="$items nfqws-keenetic-web"
   is_dpi_detector_installed         && items="$items dpi-detector"
   is_awg_manager_installed          && items="$items awg-manager"
-  is_installed "tg-ws-proxy"        && items="$items tg-ws-proxy"
   is_tg_ws_proxy_rs_installed       && items="$items tg-ws-proxy-rs"
   is_installed "usque-keenetic"     && items="$items usque-keenetic"
   is_installed "magitrickle"        && items="$items magitrickle"
@@ -4575,7 +4485,6 @@ menu_remove() {
       case "$target" in
         dpi-detector)  remove_dpi_detector ;;
         awg-manager)   remove_awg_manager ;;
-        tg-ws-proxy)   remove_tg_ws_proxy ;;
         tg-ws-proxy-rs) remove_tg_ws_proxy_rs ;;
         usque-keenetic) remove_usque_keenetic ;;
         magitrickle)   remove_magitrickle ;;
@@ -4844,11 +4753,10 @@ main_menu() {
     echo "      10. dpi-detector"
     echo "      11. awg-manager"
     echo "      12. KeenKit"
-    echo "      13. TG WS Proxy Go"
-    echo "      14. usque-keenetic"
-    echo "      15. MagiTrickle"
-    echo "      16. telemt / telemt-panel"
-    echo "      17. TG WS Proxy Rust"
+    echo "      13. usque-keenetic"
+    echo "      14. MagiTrickle"
+    echo "      15. telemt / telemt-panel"
+    echo "      16. TG WS Proxy Rust"
     echo
     printf '%s\n' "${CYAN}${BOLD}[::]  ${LBL_REMOVE} (S)${NC}"
     echo "      77. $LBL_77"
@@ -4874,11 +4782,10 @@ main_menu() {
       10) menu_dpi_detector || true ;;
       11) menu_awg_manager || true ;;
       12) menu_keenkit || true ;;
-      13) menu_tg_ws_proxy || true ;;
-      14) menu_usque_keenetic || true ;;
-      15) menu_magitrickle || true ;;
-      16) menu_telemt || true ;;
-      17) menu_tg_ws_proxy_rs || true ;;
+      13) menu_usque_keenetic || true ;;
+      14) menu_magitrickle || true ;;
+      15) menu_telemt || true ;;
+      16) menu_tg_ws_proxy_rs || true ;;
       S|s) menu_service || true ;;
       U|u) opkg_upgrade_all || true ;;
       o|O) menu_opera_hidden || true ;;
