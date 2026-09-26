@@ -3527,7 +3527,9 @@ tg_ws_proxy_rs_probe() {
     [ -n "$HOST" ] && export TG_HOST="$HOST"
     [ -n "$LINK_IP" ] && export TG_LINK_IP="$LINK_IP"
     export TG_SECRET="$SECRET"
-    [ "$DEFAULT_DOMAINS" = "true" ] && export TG_DEFAULT_DOMAINS="true"
+    # Community-список доменов здесь не включаем намеренно: он добавляет около
+    # 27 секунд на каждый прогон (31 с против 4 с в замере), а варианту лестницы
+    # не нужен — домены замеряются отдельно, один раз, до перебора.
     [ -n "$CF_DOMAIN" ] && export TG_CF_DOMAIN="$CF_DOMAIN"
     [ -n "$CF_WORKER_DOMAIN" ] && export TG_CF_WORKER_DOMAIN="$CF_WORKER_DOMAIN"
     [ -n "$MTPROTO_PROXY" ] && export TG_MTPROTO_PROXY="$MTPROTO_PROXY"
@@ -3536,9 +3538,9 @@ tg_ws_proxy_rs_probe() {
     "$TG_WS_PROXY_RS_BIN" --port "$port" --check-listener $EXTRA_ARGS 2>&1
   )
 
-  # В том же прогоне проверяются и CF-домены, поэтому вердикт берём из секции
-  # своего слушателя, а не из кода выхода. Заодно запоминаем её латентность —
-  # по ней ищется быстрейший вариант лестницы.
+  # В том же прогоне проверяются и CF-домены из конфига, поэтому вердикт берём
+  # из секции своего слушателя, а не из кода выхода. Заодно запоминаем её
+  # латентность — по ней ищется быстрейший вариант лестницы.
   section=$(printf '%s\n' "$out" | sed -n '/Own listener/,/^=\{10,\}/p')
   verdict=$(printf '%s\n' "$section" | grep -o '\[\(OK \|FAIL\|SKIP\)\]' | head -1)
   TG_WS_PROXY_RS_LAST_MS=$(printf '%s\n' "$section" | grep -o '[0-9][0-9]*ms' | head -1 | tr -d 'ms')
