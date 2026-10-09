@@ -10,7 +10,7 @@
 
 set -e
 
-SCRIPT_VERSION="0.9.40"
+SCRIPT_VERSION="0.9.41"
 
 REPO_URL="https://github.com/rndnaame/nfqws-menu"
 RAW_BASE="https://raw.githubusercontent.com/rndnaame/nfqws-menu/main"
@@ -4154,7 +4154,8 @@ menu_keenkit() {
     fi
     return 0
   fi
-  run_menu_remote_sh "12" "KeenKit" "$KEENKIT_INSTALL_URL" || return 1
+  # install.sh KeenKit — короткий bootstrap (~900 Б), скачивает keenkit.sh
+  run_menu_remote_sh "12" "KeenKit" "$KEENKIT_INSTALL_URL" 500 || return 1
 }
 
 # ---------------------------------------------------------------------------
