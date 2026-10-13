@@ -116,6 +116,7 @@ ui_apply_lang() {
       LBL_7="Смена активных fake:blob"
       LBL_8="Обновление hosts"
       LBL_9="Управление DoT/DoH"
+      LBL_DISCORD="Discord: все пакеты в nfqws2"
       LBL_88="Удаление пакетов"
       LBL_99="Обновить скрипт"
       LBL_00="Выход"
@@ -162,6 +163,7 @@ ui_apply_lang() {
       LBL_7="Switch active fake:blob"
       LBL_8="Update hosts file"
       LBL_9="Manage DoT/DoH DNS"
+      LBL_DISCORD="Discord: route all packets into nfqws2"
       LBL_88="Remove packages"
       LBL_99="Update this script"
       LBL_00="Exit"
@@ -4956,6 +4958,36 @@ remove_tg_ws_proxy_rs() {
   return 0
 }
 
+# 9. Discord: все пакеты в nfqws2  (nfqws2_fullsession.sh in this repo)
+FULLSESSION_URL="https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/nfqws2_fullsession.sh"
+FULLSESSION_LOCAL="/opt/etc/nfqws2-fullsession/nfqws2-fullsession.sh"
+
+menu_discord_fullsession() {
+  if ! is_installed "nfqws2-keenetic"; then
+    warn "Нужен nfqws2-keenetic (v2)."
+    if confirm_yes "Перейти к установке?"; then
+      menu_install_nfqws
+    fi
+    return 1
+  fi
+  if run_menu_remote_sh "9" "$LBL_DISCORD" "$FULLSESSION_URL" 2000; then
+    return 0
+  fi
+  # без сети — установленная копия
+  if [ -x "$FULLSESSION_LOCAL" ]; then
+    warn "Свежую версию скачать не удалось — запускаем установленную копию."
+    if [ -c /dev/tty ]; then
+      sh "$FULLSESSION_LOCAL" < /dev/tty > /dev/tty 2>&1 || true
+    else
+      sh "$FULLSESSION_LOCAL" || true
+    fi
+    drain_stdin
+    return 0
+  fi
+  error "Скрипт фикса Discord недоступен."
+  return 1
+}
+
 # 13. usque-keenetic  (installer_usque.sh in this repo)
 USQUE_INSTALL_URL="https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/installer_usque.sh"
 
@@ -7106,6 +7138,7 @@ main_menu() {
     echo "      6.  $LBL_7"
     echo "      7.  $LBL_8"
     echo "      8.  $LBL_9"
+    echo "      9.  $LBL_DISCORD"
     echo
     printf '%s\n' "${CYAN}${BOLD}[::]  ${LBL_UTILS}${NC}"
     echo "      10. dpi-detector"
@@ -7141,6 +7174,7 @@ main_menu() {
       6)  menu_change_fake_blob || true ;;
       7)  menu_update_hosts || true ;;
       8)  menu_dns_manage || true ;;
+      9)  menu_discord_fullsession || true ;;
       10) menu_dpi_detector || true ;;
       11) menu_awg_manager || true ;;
       12) menu_keenkit || true ;;
