@@ -18,7 +18,7 @@
 #   sh installer_warpscout.sh
 #   curl -fsSL https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/installer_warpscout.sh | sh
 
-SCRIPT_VERSION="0.1.25"
+SCRIPT_VERSION="0.1.26"
 
 # ANSI (portable для ash/BusyBox)
 RED=$(printf '\033[0;31m')
@@ -864,7 +864,8 @@ awg_api_base() {
 
 # Достаём API-ключ в AWG_KEY (глобально).
 # Промпты только в stderr — иначе key=$(...) глотает вывод и «зависает».
-awg_load_api_key() {
+# Только settings.json / .api_key — без интерактивного запроса (для фоновых проверок)
+awg_load_api_key_quiet() {
   AWG_KEY=""
   if [ -f "$AWG_SETTINGS" ]; then
     for field in apiKey api_key ApiKey APIKey; do
@@ -875,17 +876,22 @@ awg_load_api_key() {
   if [ -z "$AWG_KEY" ] && [ -f "$AWG_API_KEY_FILE" ]; then
     AWG_KEY=$(tr -d '\r\n' < "$AWG_API_KEY_FILE" 2>/dev/null)
   fi
-  if [ -z "$AWG_KEY" ]; then
-    printf '%s\n' "${YELLOW}[?]${NC} API-ключ awg-manager (Настройки → Расширенные → API Key):" >&2
-    printf '    ' >&2
-    AWG_KEY=$(read_choice)
-    printf '\n' >&2
-    if [ -n "$AWG_KEY" ]; then
-      mkdir -p /opt/etc/awg-manager 2>/dev/null || true
-      printf '%s\n' "$AWG_KEY" > "$AWG_API_KEY_FILE" 2>/dev/null || true
-      chmod 600 "$AWG_API_KEY_FILE" 2>/dev/null || true
-      info "Ключ сохранён в $AWG_API_KEY_FILE" >&2
-    fi
+  [ -n "$AWG_KEY" ]
+}
+
+awg_load_api_key() {
+  if awg_load_api_key_quiet; then
+    return 0
+  fi
+  printf '%s\n' "${YELLOW}[?]${NC} API-ключ awg-manager (Настройки → Расширенные → API Key):" >&2
+  printf '    ' >&2
+  AWG_KEY=$(read_choice)
+  printf '\n' >&2
+  if [ -n "$AWG_KEY" ]; then
+    mkdir -p /opt/etc/awg-manager 2>/dev/null || true
+    printf '%s\n' "$AWG_KEY" > "$AWG_API_KEY_FILE" 2>/dev/null || true
+    chmod 600 "$AWG_API_KEY_FILE" 2>/dev/null || true
+    info "Ключ сохранён в $AWG_API_KEY_FILE" >&2
   fi
   [ -n "$AWG_KEY" ]
 }
@@ -1726,56 +1732,9 @@ do_check_tunnel() {
   mkdir -p "$TMPDIR" 2>/dev/null || true
   : > "$iflistf"
 
-  # 1) awg-manager
-  if is_awg_manager_installed; then
-    base=$(awg_api_base)
-    if awg_load_api_key 2>/dev/null; then
-      listf="$TMPDIR/awg-tunnels-check.txt"
-      if awg_list_tunnels "$base" "$AWG_KEY" "$listf" 2>/dev/null; then
-        while IFS='|' read -r _tid tname tstat _tend _taddr tifc || [ -n "$_tid" ]; do
-          [ -n "$tifc" ] || continue
-          printf '%s|%s|%s\n' "$tifc" "${tname:-?}" "${tstat:-?}" >> "$iflistf"
-        done < "$listf"
-      fi
-    fi
-  fi
-
-  # 2) системные Wireguard* из RCI (могут не быть в awg-manager)
-  rcif="$TMPDIR/rci-wg-check.txt"
-  if rci_wireguard_addrs "$rcif" 2>/dev/null; then
-    # rci_wireguard_addrs пишет name|ipv4 — нужен ещё id интерфейса
-    # пересоберём из RCI с id
-    rci=$(curl -s --connect-timeout 1 --max-time 3 "http://127.0.0.1:79/rci/show/interface" 2>/dev/null) || rci=""
-    if [ -n "$rci" ]; then
-      tmpc="$TMPDIR/rci-chunks.txt"
-      printf '%s' "$rci" | tr '{' '\n' > "$tmpc" 2>/dev/null || true
-      while IFS= read -r chunk || [ -n "$chunk" ]; do
-        case "$chunk" in *Wireguard*) ;; *) continue ;; esac
-        echo "$chunk" | grep -qE '"type"[[:space:]]*:[[:space:]]*"Wireguard"|"id"[[:space:]]*:[[:space:]]*"Wireguard[0-9]+"' \
-          || continue
-        id=$(printf '%s' "$chunk" | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
-        [ -n "$id" ] || continue
-        case "$id" in Wireguard*|wireguard*) ;; *) continue ;; esac
-        desc=$(printf '%s' "$chunk" | sed -n 's/.*"description"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
-        link=$(printf '%s' "$chunk" | sed -n 's/.*"link"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
-        # linux if: Wireguard0 или nwg* уже в списке
-        ifc="$id"
-        # не дублировать, если этот ifc уже есть
-        _iflist_has "$iflistf" "$ifc" && continue
-        # если description совпадает с уже добавленным именем — тоже skip
-        if [ -n "$desc" ] && grep -q "|${desc}|" "$iflistf" 2>/dev/null; then
-          continue
-        fi
-        printf '%s|%s|%s\n' "$ifc" "${desc:-$id}" "${link:-?}" >> "$iflistf"
-      done < "$tmpc"
-      rm -f "$tmpc" 2>/dev/null || true
-    fi
-  fi
-
-  # 3) sysfs: nwg*/awg*/Wireguard* которых ещё нет
-  list_tunnel_ifaces | while IFS= read -r ifc || [ -n "$ifc" ]; do
+  # 1) sysfs / ip — быстро, без API-ключа и без огромного RCI
+  for ifc in $(list_tunnel_ifaces); do
     [ -n "$ifc" ] || continue
-    _iflist_has "$iflistf" "$ifc" && continue
     st="?"
     if [ -e "/sys/class/net/$ifc/operstate" ]; then
       st=$(cat "/sys/class/net/$ifc/operstate" 2>/dev/null || echo "?")
@@ -1783,8 +1742,54 @@ do_check_tunnel() {
     printf '%s|%s|%s\n' "$ifc" "$ifc" "$st" >> "$iflistf"
   done
 
+  # 2) awg-manager — только если ключ уже известен (без интерактивного запроса!)
+  if is_awg_manager_installed && awg_load_api_key_quiet; then
+    base=$(awg_api_base)
+    listf="$TMPDIR/awg-tunnels-check.txt"
+    if awg_list_tunnels "$base" "$AWG_KEY" "$listf" 2>/dev/null; then
+      while IFS='|' read -r _tid tname tstat _tend _taddr tifc _tndms || [ -n "$_tid" ]; do
+        [ -n "$tifc" ] || continue
+        case "$tifc" in *'|'*) tifc=$(printf '%s' "$tifc" | cut -d'|' -f1) ;; esac
+        # обновить имя, если ifc уже есть
+        if _iflist_has "$iflistf" "$tifc"; then
+          # переписать строку с человекочитаемым именем
+          tmpm="$iflistf.map"
+          : > "$tmpm"
+          while IFS='|' read -r _i _n _s || [ -n "$_i" ]; do
+            if [ "$_i" = "$tifc" ]; then
+              printf '%s|%s|%s\n' "$tifc" "${tname:-$_n}" "${tstat:-$_s}" >> "$tmpm"
+            else
+              printf '%s|%s|%s\n' "$_i" "$_n" "$_s" >> "$tmpm"
+            fi
+          done < "$iflistf"
+          mv -f "$tmpm" "$iflistf" 2>/dev/null || cp -f "$tmpm" "$iflistf"
+        else
+          printf '%s|%s|%s\n' "$tifc" "${tname:-?}" "${tstat:-?}" >> "$iflistf"
+        fi
+      done < "$listf"
+    fi
+  fi
+
+  # 3) RCI Wireguard — только если список пуст (избегаем тяжёлого разбора JSON)
   if [ ! -s "$iflistf" ]; then
-    error "Не найдены туннели (awg-manager / RCI Wireguard / sysfs)."
+    rcif="$TMPDIR/rci-wg-check.txt"
+    if rci_wireguard_addrs "$rcif" 2>/dev/null; then
+      while IFS='|' read -r rid rname raddr || [ -n "$rid" ]; do
+        [ -n "$rid" ] || continue
+        case "$rid" in Wireguard*|wireguard*) ;; *) continue ;; esac
+        # для curl предпочитаем nwg*, если есть
+        ifc="$rid"
+        if [ -e "/sys/class/net/nwg0" ] && [ "$rid" = "Wireguard0" ]; then
+          ifc="nwg0"
+        fi
+        _iflist_has "$iflistf" "$ifc" && continue
+        printf '%s|%s|%s\n' "$ifc" "${rname:-$rid}" "up" >> "$iflistf"
+      done < "$rcif"
+    fi
+  fi
+
+  if [ ! -s "$iflistf" ]; then
+    error "Не найдены туннели (sysfs nwg*/awg* / awg-manager / RCI)."
     return 1
   fi
 
