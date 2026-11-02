@@ -18,7 +18,7 @@
 #   sh installer_warpscout.sh
 #   curl -fsSL https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/installer_warpscout.sh | sh
 
-SCRIPT_VERSION="0.1.31"
+SCRIPT_VERSION="0.1.32"
 
 # ANSI (portable для ash/BusyBox)
 RED=$(printf '\033[0;31m')
@@ -47,7 +47,29 @@ MIPSEL_URL="https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/warpscout
 AWG_SETTINGS="/opt/etc/awg-manager/settings.json"
 AWG_API_KEY_FILE="/opt/etc/awg-manager/.api_key"
 TMPDIR="/tmp/warpscout-installer-$$"
-trap 'rm -rf "$TMPDIR" 2>/dev/null' EXIT INT TERM
+# свой tmp + чужие от мёртвых PID (обрыв SSH / kill -9 / ^C в родителе)
+_cleanup_tmpdir() {
+  rm -rf "$TMPDIR" 2>/dev/null || true
+}
+_cleanup_stale_tmp() {
+  for d in /tmp/warpscout-installer-*; do
+    [ -d "$d" ] || continue
+    # не трогаем свой каталог текущей сессии
+    [ "$d" = "$TMPDIR" ] && continue
+    pid=${d##*-}
+    case "$pid" in
+      ''|*[!0-9]*) rm -rf "$d" 2>/dev/null || true; continue ;;
+    esac
+    # PID жив? kill -0 — без сигнала
+    if kill -0 "$pid" 2>/dev/null; then
+      continue
+    fi
+    rm -rf "$d" 2>/dev/null || true
+  done
+}
+trap '_cleanup_tmpdir' EXIT INT TERM HUP
+_cleanup_stale_tmp
+mkdir -p "$TMPDIR" 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
 # Архитектура
