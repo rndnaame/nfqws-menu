@@ -18,7 +18,7 @@
 #   sh installer_warpscout.sh
 #   curl -fsSL https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/installer_warpscout.sh | sh
 
-SCRIPT_VERSION="0.1.29"
+SCRIPT_VERSION="0.1.30"
 
 # ANSI (portable для ash/BusyBox)
 RED=$(printf '\033[0;31m')
@@ -1700,7 +1700,7 @@ list_tunnel_ifaces() {
     [ -e "$n" ] || continue
     b=$(basename "$n")
     case "$b" in
-      nwg*|awg*|opkgtun*|Wireguard*|wireguard*|t2s*) _if_list="${_if_list} $b" ;;
+      nwg*|awg*|awgm*|opkgtun*|Wireguard*|wireguard*|t2s*) _if_list="${_if_list} $b" ;;
     esac
   done
   printf '%s\n' $_if_list | tr ' ' '\n' | grep -v '^$' | sort -u
@@ -1812,8 +1812,40 @@ do_check_tunnel() {
     done < "$mapf"
   fi
 
+  # awg-manager: имена/status для awgm*/nwg* (один быстрый запрос, без запроса ключа)
+  if is_awg_manager_installed && awg_load_api_key_quiet; then
+    base=$(awg_api_base)
+    listf="$TMPDIR/awg-tunnels-check.txt"
+    if awg_list_tunnels "$base" "$AWG_KEY" "$listf" 2>/dev/null; then
+      while IFS='|' read -r _tid tname tstat _tend taddr tifc _tndms || [ -n "$_tid" ]; do
+        [ -n "$tifc" ] || continue
+        case "$tifc" in *'|'*) tifc=$(printf '%s' "$tifc" | cut -d'|' -f1) ;; esac
+        if _iflist_has "$iflistf" "$tifc"; then
+          tmpm="$iflistf.map"
+          : > "$tmpm"
+          while IFS='|' read -r _i _n _s _a _g || [ -n "$_i" ]; do
+            if [ "$_i" = "$tifc" ]; then
+              # global: awg-manager defaultRoute ≈ internet tunnel
+              g="$_g"
+              [ -z "$g" ] || [ "$g" = "false" ] && g="true"
+              printf '%s|%s|%s|%s|%s\n' \"$tifc\" "${tname:-$_n}" "${tstat:-$_s}" "${taddr:-$_a}" "$g" >> "$tmpm"
+            else
+              printf '%s|%s|%s|%s|%s\n' \"$_i\" "$_n" "$_s" "$_a" "$_g" >> "$tmpm"
+            fi
+          done < "$iflistf"
+          mv -f "$tmpm" "$iflistf" 2>/dev/null || cp -f "$tmpm" "$iflistf"
+        else
+          # интерфейс только в awg-manager (ещё нет в sysfs map)
+          addr=$(printf '%s' "$taddr" | cut -d/ -f1)
+          printf '%s|%s|%s|%s|true
+' "$tifc" "${tname:-$tifc}" "${tstat:-up}" "$addr" >> "$iflistf"
+        fi
+      done < "$listf"
+    fi
+  fi
+
   if [ ! -s "$iflistf" ]; then
-    error "Не найдены туннели (nwg*/t2s*/opkgtun*)."
+    error "Не найдены туннели (nwg*/awgm*/t2s*/opkgtun*)."
     return 1
   fi
 
