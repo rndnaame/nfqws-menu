@@ -18,7 +18,7 @@
 #   sh installer_warpscout.sh
 #   curl -fsSL https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/installer_warpscout.sh | sh
 
-SCRIPT_VERSION="0.1.27"
+SCRIPT_VERSION="0.1.28"
 
 # ANSI (portable для ash/BusyBox)
 RED=$(printf '\033[0;31m')
@@ -1703,99 +1703,61 @@ list_tunnel_ifaces() {
       nwg*|awg*|opkgtun*|Wireguard*|wireguard*|t2s*) _if_list="${_if_list} $b" ;;
     esac
   done
-  if command -v ip >/dev/null 2>&1; then
-    for b in $(ip -o link show 2>/dev/null | awk -F': ' '{print $2}' | cut -d@ -f1); do
-      case "$b" in
-        nwg*|awg*|opkgtun*|Wireguard*|wireguard*|t2s*)
-          case " $_if_list " in *" $b "*) ;; *) _if_list="${_if_list} $b" ;; esac
-          ;;
-      esac
-    done
-  fi
   printf '%s\n' $_if_list | tr ' ' '\n' | grep -v '^$' | sort -u
 }
 
-# IPv4 интерфейса (быстро)
-_iface_ipv4() {
-  ifc="$1"
-  a=""
-  if command -v ip >/dev/null 2>&1; then
-    a=$(ip -4 -o addr show dev "$ifc" 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -1)
-  fi
-  if [ -z "$a" ] && command -v ifconfig >/dev/null 2>&1; then
-    a=$(ifconfig "$ifc" 2>/dev/null | sed -n 's/.*inet addr:\([0-9.]*\).*/\1/p;s/.*inet \([0-9.]*\).*/\1/p' | head -1)
-  fi
-  printf '%s' "$a"
-}
-
-_iface_updown() {
-  ifc="$1"
-  if [ -e "/sys/class/net/$ifc/operstate" ]; then
-    st=$(cat "/sys/class/net/$ifc/operstate" 2>/dev/null || echo "?")
-    case "$st" in
-      up|unknown)
-        # unknown часто у POINTOPOINT туннелей при RUNNING
-        if ifconfig "$ifc" 2>/dev/null | grep -q 'UP'; then
-          printf 'up'
-        else
-          printf '%s' "$st"
-        fi
-        ;;
-      *) printf '%s' "$st" ;;
-    esac
-  elif ifconfig "$ifc" 2>/dev/null | grep -q 'UP'; then
-    printf 'up'
-  else
-    printf '?'
-  fi
-}
-
-# Уже есть ifc в iflistf?
 _iflist_has() {
   grep -q "^${2}|" "$1" 2>/dev/null
 }
 
-# Обогатить имена из RCI: WireguardN→nwgN, ProxyN→t2sN, OpkgTunN→opkgtunN
-# Формат map-файла: linux_ifc|description
-_rci_name_map() {
+# Один curl RCI → map: ifc|name|addr|status  (nwg/t2s/opkgtun + raw id)
+# Разбор одним awk, без циклов sed на каждый кусок.
+_rci_tunnel_map() {
   out="$1"
   : > "$out"
   rci=$(curl -s --connect-timeout 1 --max-time 2 "http://127.0.0.1:79/rci/show/interface" 2>/dev/null) || rci=""
   [ -n "$rci" ] || return 1
-  # режем по "id": — куски компактнее, чем весь JSON в памяти циклом
-  tmpc="$out.chunks"
-  printf '%s' "$rci" | tr '}' '\n' > "$tmpc" 2>/dev/null || true
-  while IFS= read -r chunk || [ -n "$chunk" ]; do
-    id=$(printf '%s' "$chunk" | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
-    [ -n "$id" ] || continue
-    desc=$(printf '%s' "$chunk" | sed -n 's/.*"description"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
-    [ -n "$desc" ] || continue
-    case "$id" in
-      Wireguard[0-9]*|wireguard[0-9]*)
-        num=$(printf '%s' "$id" | sed 's/[^0-9]//g')
-        # Keenetic: WireguardN ↔ nwgN (часто)
-        if [ -e "/sys/class/net/nwg${num}" ]; then
-          printf 'nwg%s|%s\n' "$num" "$desc" >> "$out"
-        fi
-        printf '%s|%s\n' "$id" "$desc" >> "$out"
-        ;;
-      Proxy[0-9]*)
-        num=$(printf '%s' "$id" | sed 's/[^0-9]//g')
-        if [ -e "/sys/class/net/t2s${num}" ]; then
-          printf 't2s%s|%s\n' "$num" "$desc" >> "$out"
-        fi
-        printf '%s|%s\n' "$id" "$desc" >> "$out"
-        ;;
-      OpkgTun[0-9]*|opkgtun[0-9]*)
-        num=$(printf '%s' "$id" | sed 's/[^0-9]//g')
-        if [ -e "/sys/class/net/opkgtun${num}" ]; then
-          printf 'opkgtun%s|%s\n' "$num" "$desc" >> "$out"
-        fi
-        printf '%s|%s\n' "$id" "$desc" >> "$out"
-        ;;
-    esac
-  done < "$tmpc"
-  rm -f "$tmpc" 2>/dev/null || true
+  # Один проход awk: объекты по '{', только Wireguard/Proxy/OpkgTun
+  printf '%s' "$rci" | awk '
+    BEGIN { RS="{" }
+    function get(s, key,    p, rest, q2) {
+      p = index(s, "\"" key "\"")
+      if (!p) return ""
+      rest = substr(s, p + length(key) + 2)
+      sub(/^[[:space:]]*:[[:space:]]*/, "", rest)
+      if (substr(rest, 1, 1) != "\"") return ""
+      rest = substr(rest, 2)
+      q2 = index(rest, "\"")
+      if (!q2) return ""
+      return substr(rest, 1, q2 - 1)
+    }
+    function digits(s,    i, c, out) {
+      out = ""
+      for (i = 1; i <= length(s); i++) {
+        c = substr(s, i, 1)
+        if (c >= "0" && c <= "9") out = out c
+      }
+      return out
+    }
+    {
+      typ = get($0, "type")
+      if (typ != "Wireguard" && typ != "Proxy" && typ != "OpkgTun") next
+      id = get($0, "id")
+      if (id == "") next
+      desc = get($0, "description")
+      addr = get($0, "address")
+      link = get($0, "link")
+      if (link == "") link = "up"
+      num = digits(id)
+      linux = id
+      if (typ == "Wireguard" && num != "") linux = "nwg" num
+      if (typ == "Proxy" && num != "") linux = "t2s" num
+      if (typ == "OpkgTun" && num != "") linux = "opkgtun" num
+      name = desc
+      if (name == "") name = id
+      print linux "|" name "|" addr "|" link
+    }
+  ' > "$out" 2>/dev/null
   [ -s "$out" ]
 }
 
@@ -1812,56 +1774,41 @@ do_check_tunnel() {
   mkdir -p "$TMPDIR" 2>/dev/null || true
   : > "$iflistf"
 
-  # 1) sysfs: nwg / t2s (Proxy) / opkgtun / Wireguard
+  # --- один запрос RCI: имена + адреса + link ---
+  mapf="$TMPDIR/rci-tun.map"
+  _rci_tunnel_map "$mapf" 2>/dev/null || : > "$mapf"
+
+  # --- интерфейсы из sysfs (без ifconfig/ip на каждый) ---
   for ifc in $(list_tunnel_ifaces); do
     [ -n "$ifc" ] || continue
-    st=$(_iface_updown "$ifc")
-    addr=$(_iface_ipv4 "$ifc")
-    printf '%s|%s|%s|%s\n' "$ifc" "$ifc" "$st" "$addr" >> "$iflistf"
+    st="up"
+    [ -e "/sys/class/net/$ifc/operstate" ] && st=$(cat "/sys/class/net/$ifc/operstate" 2>/dev/null || echo up)
+    case "$st" in unknown|down) ;; *) st="up" ;; esac
+    # из RCI map
+    line=$(grep "^${ifc}|" "$mapf" 2>/dev/null | head -1)
+    if [ -n "$line" ]; then
+      name=$(printf '%s' "$line" | cut -d'|' -f2)
+      addr=$(printf '%s' "$line" | cut -d'|' -f3)
+      rlink=$(printf '%s' "$line" | cut -d'|' -f4)
+      [ -n "$rlink" ] && st="$rlink"
+    else
+      name="$ifc"
+      addr=""
+    fi
+    printf '%s|%s|%s|%s\n' "$ifc" "$name" "$st" "$addr" >> "$iflistf"
   done
 
-  # 2) имена из RCI (Wireguard→nwg, Proxy→t2s, OpkgTun→opkgtun)
-  mapf="$TMPDIR/rci-names.map"
-  if _rci_name_map "$mapf" 2>/dev/null; then
-    tmpm="$iflistf.map"
-    : > "$tmpm"
-    while IFS='|' read -r _i _n _s _a || [ -n "$_i" ]; do
-      [ -n "$_i" ] || continue
-      nm=$(grep "^${_i}|" "$mapf" 2>/dev/null | head -1 | cut -d'|' -f2)
-      [ -n "$nm" ] || nm="$_n"
-      printf '%s|%s|%s|%s\n' "$_i" "$nm" "$_s" "$_a" >> "$tmpm"
-    done < "$iflistf"
-    mv -f "$tmpm" "$iflistf" 2>/dev/null || cp -f "$tmpm" "$iflistf"
-  fi
-
-  # 3) awg-manager — уточнить имена/status, если ключ уже есть
-  if is_awg_manager_installed && awg_load_api_key_quiet; then
-    base=$(awg_api_base)
-    listf="$TMPDIR/awg-tunnels-check.txt"
-    if awg_list_tunnels "$base" "$AWG_KEY" "$listf" 2>/dev/null; then
-      while IFS='|' read -r _tid tname tstat _tend _taddr tifc _tndms || [ -n "$_tid" ]; do
-        [ -n "$tifc" ] || continue
-        case "$tifc" in *'|'*) tifc=$(printf '%s' "$tifc" | cut -d'|' -f1) ;; esac
-        if _iflist_has "$iflistf" "$tifc"; then
-          tmpm="$iflistf.map"
-          : > "$tmpm"
-          while IFS='|' read -r _i _n _s _a || [ -n "$_i" ]; do
-            if [ "$_i" = "$tifc" ]; then
-              printf '%s|%s|%s|%s\n' "$tifc" "${tname:-$_n}" "${tstat:-$_s}" "${_taddr:-$_a}" >> "$tmpm"
-            else
-              printf '%s|%s|%s|%s\n' "$_i" "$_n" "$_s" "$_a" >> "$tmpm"
-            fi
-          done < "$iflistf"
-          mv -f "$tmpm" "$iflistf" 2>/dev/null || cp -f "$tmpm" "$iflistf"
-        else
-          printf '%s|%s|%s|%s\n' "$tifc" "${tname:-?}" "${tstat:-?}" "${_taddr:-}" >> "$iflistf"
-        fi
-      done < "$listf"
-    fi
+  # если sysfs пуст — показать то, что есть в RCI (linux if)
+  if [ ! -s "$iflistf" ] && [ -s "$mapf" ]; then
+    while IFS='|' read -r ifc name addr st || [ -n "$ifc" ]; do
+      case "$ifc" in nwg*|t2s*|opkgtun*|awg*) ;; *) continue ;; esac
+      _iflist_has "$iflistf" "$ifc" && continue
+      printf '%s|%s|%s|%s\n' "$ifc" "${name:-$ifc}" "${st:-up}" "$addr" >> "$iflistf"
+    done < "$mapf"
   fi
 
   if [ ! -s "$iflistf" ]; then
-    error "Не найдены туннели (nwg*/t2s*/opkgtun* / awg-manager)."
+    error "Не найдены туннели (nwg*/t2s*/opkgtun*)."
     return 1
   fi
 
