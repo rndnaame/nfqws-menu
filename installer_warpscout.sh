@@ -18,7 +18,7 @@
 #   sh installer_warpscout.sh
 #   curl -fsSL https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/installer_warpscout.sh | sh
 
-SCRIPT_VERSION="0.1.28"
+SCRIPT_VERSION="0.1.29"
 
 # ANSI (portable для ash/BusyBox)
 RED=$(printf '\033[0;31m')
@@ -1755,7 +1755,10 @@ _rci_tunnel_map() {
       if (typ == "OpkgTun" && num != "") linux = "opkgtun" num
       name = desc
       if (name == "") name = id
-      print linux "|" name "|" addr "|" link
+      glob = "false"
+      if (index($0, "\"global\"") && index($0, "\"global\": true")) glob = "true"
+      if (index($0, "\"global\":true")) glob = "true"
+      print linux "|" name "|" addr "|" link "|" glob
     }
   ' > "$out" 2>/dev/null
   [ -s "$out" ]
@@ -1779,31 +1782,33 @@ do_check_tunnel() {
   _rci_tunnel_map "$mapf" 2>/dev/null || : > "$mapf"
 
   # --- интерфейсы из sysfs (без ifconfig/ip на каждый) ---
+  # iflistf: ifc|name|status|addr|global
   for ifc in $(list_tunnel_ifaces); do
     [ -n "$ifc" ] || continue
     st="up"
     [ -e "/sys/class/net/$ifc/operstate" ] && st=$(cat "/sys/class/net/$ifc/operstate" 2>/dev/null || echo up)
     case "$st" in unknown|down) ;; *) st="up" ;; esac
-    # из RCI map
     line=$(grep "^${ifc}|" "$mapf" 2>/dev/null | head -1)
+    glob="false"
     if [ -n "$line" ]; then
       name=$(printf '%s' "$line" | cut -d'|' -f2)
       addr=$(printf '%s' "$line" | cut -d'|' -f3)
       rlink=$(printf '%s' "$line" | cut -d'|' -f4)
+      glob=$(printf '%s' "$line" | cut -d'|' -f5)
       [ -n "$rlink" ] && st="$rlink"
     else
       name="$ifc"
       addr=""
     fi
-    printf '%s|%s|%s|%s\n' "$ifc" "$name" "$st" "$addr" >> "$iflistf"
+    [ -n "$glob" ] || glob="false"
+    printf '%s|%s|%s|%s|%s\n' "$ifc" "$name" "$st" "$addr" "$glob" >> "$iflistf"
   done
 
-  # если sysfs пуст — показать то, что есть в RCI (linux if)
   if [ ! -s "$iflistf" ] && [ -s "$mapf" ]; then
-    while IFS='|' read -r ifc name addr st || [ -n "$ifc" ]; do
+    while IFS='|' read -r ifc name addr st glob || [ -n "$ifc" ]; do
       case "$ifc" in nwg*|t2s*|opkgtun*|awg*) ;; *) continue ;; esac
       _iflist_has "$iflistf" "$ifc" && continue
-      printf '%s|%s|%s|%s\n' "$ifc" "${name:-$ifc}" "${st:-up}" "$addr" >> "$iflistf"
+      printf '%s|%s|%s|%s|%s\n' "$ifc" "${name:-$ifc}" "${st:-up}" "$addr" "${glob:-false}" >> "$iflistf"
     done < "$mapf"
   fi
 
@@ -1821,20 +1826,32 @@ do_check_tunnel() {
     tlabel=$(sed -n '1p' "$iflistf" | cut -d'|' -f2)
     tstat=$(sed -n '1p' "$iflistf" | cut -d'|' -f3)
     taddr=$(sed -n '1p' "$iflistf" | cut -d'|' -f4)
-    info "Интерфейс: $iface · ${tlabel} [${tstat}]${taddr:+ · $taddr}"
+    tglob=$(sed -n '1p' "$iflistf" | cut -d'|' -f5)
+    if [ "$tglob" = "true" ]; then
+      info "Интерфейс: $iface · ${GREEN}${tlabel}${NC} [${tstat}]${taddr:+ · $taddr}"
+    else
+      info "Интерфейс: $iface · ${DIM}${tlabel}${NC} [${tstat}]${taddr:+ · $taddr}"
+    fi
   else
     echo
     printf '%s\n' "${BOLD}Туннели / интерфейсы:${NC}"
     n=0
-    while IFS='|' read -r ifc tlabel tstat taddr || [ -n "$ifc" ]; do
+    while IFS='|' read -r ifc tlabel tstat taddr tglob || [ -n "$ifc" ]; do
       [ -n "$ifc" ] || continue
       n=$((n + 1))
-      # не дублировать имя, если совпадает с ifc
       extra="$tlabel"
       [ "$extra" = "$ifc" ] && extra=""
-      printf '  %s%d)%s  %s  %s[%s]%s%s%s\n' \
-        "$BOLD" "$n" "$NC" "$ifc" "$DIM" "${tstat:-?}" "$NC" \
-        "${extra:+ · $extra}" "${taddr:+ · $taddr}"
+      if [ "$tglob" = "true" ]; then
+        ncol="$GREEN"
+      else
+        ncol="$DIM"
+      fi
+      printf '  %s%d)%s  %s  %s[%s]%s'         "$BOLD" "$n" "$NC" "$ifc" "$DIM" "${tstat:-?}" "$NC"
+      if [ -n "$extra" ]; then
+        printf ' · %s%s%s' "$ncol" "$extra" "$NC"
+      fi
+      [ -n "$taddr" ] && printf ' · %s' "$taddr"
+      printf '\n'
     done < "$iflistf"
     echo "  0) Отмена"
     echo
