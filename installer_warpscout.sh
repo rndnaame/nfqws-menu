@@ -18,7 +18,7 @@
 #   sh installer_warpscout.sh
 #   curl -fsSL https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/installer_warpscout.sh | sh
 
-SCRIPT_VERSION="0.1.32"
+SCRIPT_VERSION="0.1.33"
 
 # ANSI (portable для ash/BusyBox)
 RED=$(printf '\033[0;31m')
@@ -1891,74 +1891,92 @@ do_check_tunnel() {
   i=$(wc -l < "$iflistf" 2>/dev/null | tr -d ' ')
   case "$i" in ''|*[!0-9]*) i=0 ;; esac
 
-  # один интерфейс — без меню
-  if [ "$i" -eq 1 ]; then
-    iface=$(sed -n '1p' "$iflistf" | cut -d'|' -f1)
-    tlabel=$(sed -n '1p' "$iflistf" | cut -d'|' -f2)
-    tstat=$(sed -n '1p' "$iflistf" | cut -d'|' -f3)
-    taddr=$(sed -n '1p' "$iflistf" | cut -d'|' -f4)
-    tglob=$(sed -n '1p' "$iflistf" | cut -d'|' -f5)
-    if [ "$tglob" = "true" ]; then
-      info "Интерфейс: $iface · ${GREEN}${tlabel}${NC} [${tstat}]${taddr:+ · $taddr}"
-    else
-      info "Интерфейс: $iface · ${DIM}${tlabel}${NC} [${tstat}]${taddr:+ · $taddr}"
-    fi
-  else
-    echo
-    printf '%s\n' "${BOLD}Туннели / интерфейсы:${NC}"
-    n=0
-    while IFS='|' read -r ifc tlabel tstat taddr tglob || [ -n "$ifc" ]; do
-      [ -n "$ifc" ] || continue
-      n=$((n + 1))
-      extra="$tlabel"
-      [ "$extra" = "$ifc" ] && extra=""
+  # цикл: проверка → снова список (без выхода в главное меню)
+  while true; do
+    iface=""
+    tlabel=""
+
+    if [ "$i" -eq 1 ]; then
+      iface=$(sed -n '1p' "$iflistf" | cut -d'|' -f1)
+      tlabel=$(sed -n '1p' "$iflistf" | cut -d'|' -f2)
+      tstat=$(sed -n '1p' "$iflistf" | cut -d'|' -f3)
+      taddr=$(sed -n '1p' "$iflistf" | cut -d'|' -f4)
+      tglob=$(sed -n '1p' "$iflistf" | cut -d'|' -f5)
       if [ "$tglob" = "true" ]; then
-        ncol="$GREEN"
+        info "Интерфейс: $iface · ${GREEN}${tlabel}${NC} [${tstat}]${taddr:+ · $taddr}"
       else
-        ncol="$DIM"
+        info "Интерфейс: $iface · ${DIM}${tlabel}${NC} [${tstat}]${taddr:+ · $taddr}"
       fi
-      printf '  %s%d)%s  %s  %s[%s]%s'         "$BOLD" "$n" "$NC" "$ifc" "$DIM" "${tstat:-?}" "$NC"
-      if [ -n "$extra" ]; then
-        printf ' · %s%s%s' "$ncol" "$extra" "$NC"
+    else
+      echo
+      printf '%s\n' "${BOLD}Туннели / интерфейсы:${NC}"
+      n=0
+      while IFS='|' read -r ifc tlab tstat taddr tglob || [ -n "$ifc" ]; do
+        [ -n "$ifc" ] || continue
+        n=$((n + 1))
+        extra="$tlab"
+        [ "$extra" = "$ifc" ] && extra=""
+        if [ "$tglob" = "true" ]; then
+          ncol="$GREEN"
+        else
+          ncol="$DIM"
+        fi
+        printf '  %s%d)%s  %s  %s[%s]%s' \
+          "$BOLD" "$n" "$NC" "$ifc" "$DIM" "${tstat:-?}" "$NC"
+        if [ -n "$extra" ]; then
+          printf ' · %s%s%s' "$ncol" "$extra" "$NC"
+        fi
+        [ -n "$taddr" ] && printf ' · %s' "$taddr"
+        printf '\n'
+      done < "$iflistf"
+      echo "  0) Выход"
+      echo
+      printf '  %sВыбор:%s ' "$BOLD" "$NC"
+      sel=$(read_choice)
+      echo
+      case "$sel" in
+        0|"") info "Выход из проверки."; return 0 ;;
+        *[!0-9]*) warn "Неверный выбор."; continue ;;
+      esac
+      if [ "$sel" -lt 1 ] || [ "$sel" -gt "$n" ]; then
+        warn "Неверный номер."
+        continue
       fi
-      [ -n "$taddr" ] && printf ' · %s' "$taddr"
-      printf '\n'
-    done < "$iflistf"
-    echo "  0) Отмена"
-    echo
-    printf '  %sВыбор:%s ' "$BOLD" "$NC"
-    sel=$(read_choice)
-    echo
-    case "$sel" in
-      0|"") info "Отменено."; return 0 ;;
-      *[!0-9]*) warn "Неверный выбор."; return 1 ;;
-    esac
-    if [ "$sel" -lt 1 ] || [ "$sel" -gt "$n" ]; then
-      warn "Неверный номер."
-      return 1
+      iface=$(sed -n "${sel}p" "$iflistf" | cut -d'|' -f1)
+      tlabel=$(sed -n "${sel}p" "$iflistf" | cut -d'|' -f2)
     fi
-    iface=$(sed -n "${sel}p" "$iflistf" | cut -d'|' -f1)
-    tlabel=$(sed -n "${sel}p" "$iflistf" | cut -d'|' -f2)
-  fi
-  [ -n "$iface" ] || { error "Пустой интерфейс."; return 1; }
 
-  if ! ip link show "$iface" >/dev/null 2>&1 && [ ! -e "/sys/class/net/$iface" ]; then
-    warn "Интерфейс $iface не найден (ip link)."
-  fi
+    [ -n "$iface" ] || { error "Пустой интерфейс."; return 1; }
 
-  echo
-  run_iface_probes "$iface"
-  ok=$_probe_ok
-  echo
-  show_cf_trace "$iface" || true
-  echo
-  if [ "$ok" -ge 2 ]; then
-    info "Проверка пройдена: $ok/3 хостов доступны через $iface"
+    if ! ip link show "$iface" >/dev/null 2>&1 && [ ! -e "/sys/class/net/$iface" ]; then
+      warn "Интерфейс $iface не найден (ip link)."
+    fi
+
+    echo
+    info "Проверяем: $iface${tlabel:+ · $tlabel}"
+    run_iface_probes "$iface"
+    ok=$_probe_ok
+    echo
+    show_cf_trace "$iface" || true
+    echo
+    if [ "$ok" -ge 2 ]; then
+      info "Проверка пройдена: $ok/3 хостов доступны через $iface"
+    else
+      error "Хосты недоступны через $iface ($ok/3)"
+      printf '%s\n' "${DIM}Вручную: curl --interface $iface -m 10 -L https://2ip.io/${NC}"
+    fi
+
+    # один интерфейс — не крутить меню
+    if [ "$i" -eq 1 ]; then
+      return 0
+    fi
+
+    echo
+    if confirm_Y "Проверить другой туннель?"; then
+      continue
+    fi
     return 0
-  fi
-  error "Хосты недоступны через $iface ($ok/3)"
-  printf '%s\n' "${DIM}Вручную: curl --interface $iface -m 10 -L https://2ip.io/${NC}"
-  return 1
+  done
 }
 
 # ---------------------------------------------------------------------------
