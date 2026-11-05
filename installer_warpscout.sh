@@ -19,14 +19,13 @@
 #   sh installer_warpscout.sh
 #   curl -fsSL https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/installer_warpscout.sh | sh
 
-SCRIPT_VERSION="0.1.44"
+SCRIPT_VERSION="0.1.48"
 
 # ANSI (portable для ash/BusyBox)
 RED=$(printf '\033[0;31m')
 GREEN=$(printf '\033[0;32m')
 YELLOW=$(printf '\033[1;33m')
 CYAN=$(printf '\033[0;36m')
-BLUE=$(printf '\033[0;34m')
 BOLD=$(printf '\033[1m')
 DIM=$(printf '\033[2m')
 NC=$(printf '\033[0m')
@@ -63,7 +62,6 @@ GITHUB_REPO="rndnaame/warpscout"
 OFFICIAL_REPO="vernette/warpscout"
 # fallback, если GitHub API недоступен
 PIN_VERSION="0.16.1"
-MIPSEL_BIN_FALLBACK="https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/warpscout/warpscout-0.16.1-mipsle"
 WS_VERSION=""
 WS_VERSION_SOURCE=""
 AWG_SETTINGS="/opt/etc/awg-manager/settings.json"
@@ -527,20 +525,6 @@ do_install() {
           src="$INSTALL_SRC"
         fi
       fi
-      if [ -z "$src" ] || [ ! -f "$src" ]; then
-        warn "Release недоступен — raw mipsel-bin..."
-        src="$TMPDIR/warpscout"
-        if ! http_get "$MIPSEL_BIN_FALLBACK" "$src"; then
-          error "Не удалось скачать mipsel."
-          return 1
-        fi
-        sz=$(wc -c < "$src" 2>/dev/null | tr -d ' ')
-        case "$sz" in ''|*[!0-9]*) sz=0 ;; esac
-        if [ "$sz" -lt 100000 ]; then
-          error "Файл слишком маленький (${sz} байт)."
-          return 1
-        fi
-      fi
       ;;
     *)
       error "Неподдерживаемая ARCH=$ARCH"
@@ -906,6 +890,101 @@ do_apply_junk() {
   esac
 }
 
+
+# Загрузить Jc/Jmin/Jmax/I1 из json/API туннеля → глобальные JC/JMIN/JMAX/I1
+# load_junk_from_tunnel_id TID
+load_junk_from_tunnel_id() {
+  tid="$1"
+  [ -n "$tid" ] || return 1
+  body=""
+  localf="/opt/etc/awg-manager/tunnels/${tid}.json"
+  if [ -f "$localf" ]; then
+    body=$(cat "$localf" 2>/dev/null) || body=""
+  fi
+  if [ -z "$body" ]; then
+    base=$(awg_api_base)
+    [ -n "$AWG_KEY" ] || awg_load_api_key_quiet || return 1
+    for path in \
+      "tunnels/${tid}" \
+      "tunnels/get?id=${tid}" \
+      "tunnels?id=${tid}" \
+      "export/conf?id=${tid}" \
+      "tunnels/export?id=${tid}"
+    do
+      body=$(curl -sS --connect-timeout 3 --max-time 8 \
+        -H "Authorization: Bearer ${AWG_KEY}" \
+        "${base}/${path}" 2>/dev/null) || body=""
+      case "$body" in
+        *'"jc"'*|*"Jc = "*|*"jc":*) break ;;
+        *) body="" ;;
+      esac
+    done
+  fi
+  [ -n "$body" ] || return 1
+  JC=$(printf '%s' "$body" | sed -n 's/.*"jc"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p;s/.*[Jj]c[[:space:]]*=[[:space:]]*\([0-9][0-9]*\).*/\1/p' | head -1)
+  JMIN=$(printf '%s' "$body" | sed -n 's/.*"jmin"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p;s/.*[Jj]min[[:space:]]*=[[:space:]]*\([0-9][0-9]*\).*/\1/p' | head -1)
+  JMAX=$(printf '%s' "$body" | sed -n 's/.*"jmax"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p;s/.*[Jj]max[[:space:]]*=[[:space:]]*\([0-9][0-9]*\).*/\1/p' | head -1)
+  I1=$(printf '%s' "$body" | sed -n 's/.*"i1"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p;s/.*[Ii]1[[:space:]]*=[[:space:]]*\(.*\)/\1/p' | head -1)
+  I1=$(printf '%s' "$I1" | sed 's/\r$//;s/[[:space:]]*$//')
+  [ -n "$JC" ]
+}
+
+# Интерактивный выбор туннеля → JC/JMIN/JMAX/I1 (без записи на диск)
+pick_junk_from_tunnel_menu() {
+  if ! is_awg_manager_installed; then
+    error "awg-manager не установлен."
+    return 1
+  fi
+  if ! command -v curl >/dev/null 2>&1; then
+    error "Нужен curl."
+    return 1
+  fi
+  if ! awg_load_api_key; then
+    error "Нет API-ключа awg-manager."
+    return 1
+  fi
+  base=$(awg_api_base)
+  ensure_tmpdir
+  listf="$TMPDIR/junk-tun-pick.txt"
+  if ! awg_list_tunnels "$base" "$AWG_KEY" "$listf" 2>/dev/null || [ ! -s "$listf" ]; then
+    error "Не удалось получить список туннелей."
+    return 1
+  fi
+  echo
+  printf '%s\n' "${BOLD}Туннель (junk-параметры):${NC}"
+  n=0
+  while IFS='|' read -r tid tname tstat tend taddr tifc _tndms || [ -n "$tid" ]; do
+    [ -n "$tid" ] || continue
+    n=$((n + 1))
+    _label="$tname"
+    [ -n "$tifc" ] && [ "$tifc" != "$tname" ] && _label="${tname} · ${tifc}"
+    print_tunnel_menu_line "$n" "$tid" "${tstat:-?}" "$_label" "$taddr" "$tend" "true"
+  done < "$listf"
+  echo "  0) Отмена"
+  echo
+  printf '  %sВыбор:%s ' "$BOLD" "$NC"
+  sel=$(read_choice)
+  echo
+  case "$sel" in
+    0|"") info "Отменено."; return 1 ;;
+    *[!0-9]*) warn "Неверный выбор."; return 1 ;;
+  esac
+  if [ "$sel" -lt 1 ] || [ "$sel" -gt "$n" ]; then
+    warn "Неверный номер."
+    return 1
+  fi
+  line=$(sed -n "${sel}p" "$listf")
+  tid=$(printf '%s' "$line" | cut -d'|' -f1)
+  tname=$(printf '%s' "$line" | cut -d'|' -f2)
+  if ! load_junk_from_tunnel_id "$tid"; then
+    error "В туннеле $tid нет Jc (json/API)."
+    return 1
+  fi
+  info "Из «${tname}» ($tid): jc=$JC jmin=${JMIN:-?} jmax=${JMAX:-?}"
+  [ -n "$I1" ] && info "i1: $(show_i1_brief "$I1")" || warn "i1 пуст"
+  return 0
+}
+
 # ---------------------------------------------------------------------------
 # Junk из туннеля awg-manager (Jc/Jmin/Jmax/I1 из API)
 # ---------------------------------------------------------------------------
@@ -1010,10 +1089,8 @@ do_junk_from_tunnel() {
   save_junk_params "$JC" "$JMIN" "$JMAX" "$I1"
   info "Из «${tname}» ($tid): jc=$JC jmin=${JMIN:-?} jmax=${JMAX:-?}"
   [ -n "$I1" ] && info "i1: ${#I1} символов" || warn "i1 пуст"
-  echo
-  if confirm_Y "Применить к conf / туннелю сейчас?"; then
-    do_apply_junk || true
-  fi
+  # сразу выбор куда применить (без повторного Y/n)
+  do_apply_junk || true
   return 0
 }
 
@@ -1166,15 +1243,63 @@ do_scan() {
   mkdir -p /opt/root 2>/dev/null || true
   cd /opt/root || true
 
-  set -- scan -p awg -P -o "$SCAN_OUT" -conf "$CONF_OUT"
+  # Выбор junk для этого scan
+  JC=""; JMIN=""; JMAX=""; I1=""
+  echo
+  printf '%s
+' "${BOLD}Параметры junk для сканирования:${NC}"
+  echo "  1) Быстрое сканирование (без junk — дефолты warpscout)"
   if load_junk_params; then
-    info "Используем junk из $JUNK_FILE: jc=$JC jmin=$JMIN jmax=$JMAX"
+    echo "  2) Сохранённые: jc=${JC:-?} jmin=${JMIN:-?} jmax=${JMAX:-?}"
+  else
+    printf '  %s2) Сохранённые%s  %s(нет %s)%s
+' "$DIM" "$NC" "$DIM" "$JUNK_FILE" "$NC"
+  fi
+  if is_awg_manager_installed; then
+    echo "  3) Из рабочего туннеля awg-manager"
+  else
+    printf '  %s3) Из туннеля awg-manager%s  %s(нет awg-manager)%s
+' "$DIM" "$NC" "$DIM" "$NC"
+  fi
+  echo "  0) Отмена"
+  echo
+  printf '  %sВыбор:%s ' "$BOLD" "$NC"
+  _jsel=$(read_choice)
+  echo
+  case "$_jsel" in
+    0|"") info "Отменено."; return 0 ;;
+    1)
+      JC=""; JMIN=""; JMAX=""; I1=""
+      info "Режим: быстрый scan без кастомных junk."
+      ;;
+    2)
+      if ! load_junk_params; then
+        error "Нет сохранённых junk. Сначала п.4 или выберите другой режим."
+        return 1
+      fi
+      info "Режим: сохранённые junk (jc=$JC jmin=$JMIN jmax=$JMAX)."
+      ;;
+    3)
+      if ! is_awg_manager_installed; then
+        error "awg-manager не установлен."
+        return 1
+      fi
+      if ! pick_junk_from_tunnel_menu; then
+        return 1
+      fi
+      ;;
+    *)
+      warn "Неверный выбор."
+      return 1
+      ;;
+  esac
+
+  set -- scan -p awg -P -o "$SCAN_OUT" -conf "$CONF_OUT"
+  if [ -n "$JC" ] || [ -n "$I1" ]; then
     [ -n "$JC" ] && set -- "$@" -jc "$JC"
     [ -n "$JMIN" ] && set -- "$@" -jmin "$JMIN"
     [ -n "$JMAX" ] && set -- "$@" -jmax "$JMAX"
     [ -n "$I1" ] && set -- "$@" -i1 "$I1"
-  else
-    info "Junk-параметры не заданы (п.4 find-junk) — дефолты warpscout."
   fi
 
   info "Команда: warpscout $*"
