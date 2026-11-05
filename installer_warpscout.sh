@@ -19,7 +19,7 @@
 #   sh installer_warpscout.sh
 #   curl -fsSL https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/installer_warpscout.sh | sh
 
-SCRIPT_VERSION="0.1.48"
+SCRIPT_VERSION="0.1.50"
 
 # ANSI (portable для ash/BusyBox)
 RED=$(printf '\033[0;31m')
@@ -2469,6 +2469,87 @@ do_remove() {
 # ---------------------------------------------------------------------------
 # Меню
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Показать сохранённый conf (+ опционально QR, если есть qrencode)
+# ---------------------------------------------------------------------------
+do_show_conf() {
+  echo
+  info "Сохранённый конфиг"
+  if ! has_conf; then
+    error "Нет conf: $CONF_OUT (сначала п.3 scan)."
+    return 1
+  fi
+  sz=$(wc -c < "$CONF_OUT" 2>/dev/null | tr -d ' ')
+  case "$sz" in ''|*[!0-9]*) sz=0 ;; esac
+  info "Файл: $CONF_OUT (${sz} байт)"
+  echo
+  printf '%s\n' "${DIM}──────── $CONF_OUT ────────${NC}"
+  cat "$CONF_OUT" 2>/dev/null || true
+  echo
+  printf '%s\n' "${DIM}────────────────────────────${NC}"
+
+  _ep=$(grep -iE '^[[:space:]]*Endpoint[[:space:]]*=' "$CONF_OUT" 2>/dev/null | head -1 | sed 's/^[^=]*=[[:space:]]*//')
+  _addr=$(grep -iE '^[[:space:]]*Address[[:space:]]*=' "$CONF_OUT" 2>/dev/null | head -1 | sed 's/^[^=]*=[[:space:]]*//')
+  _jc=$(grep -iE '^[[:space:]]*Jc[[:space:]]*=' "$CONF_OUT" 2>/dev/null | head -1 | sed 's/^[^=]*=[[:space:]]*//')
+  _jmin=$(grep -iE '^[[:space:]]*Jmin[[:space:]]*=' "$CONF_OUT" 2>/dev/null | head -1 | sed 's/^[^=]*=[[:space:]]*//')
+  _jmax=$(grep -iE '^[[:space:]]*Jmax[[:space:]]*=' "$CONF_OUT" 2>/dev/null | head -1 | sed 's/^[^=]*=[[:space:]]*//')
+  _i1=$(grep -iE '^[[:space:]]*I1[[:space:]]*=' "$CONF_OUT" 2>/dev/null | head -1 | sed 's/^[^=]*=[[:space:]]*//')
+  echo
+  [ -n "$_ep" ] && info "Endpoint: $_ep"
+  [ -n "$_addr" ] && info "Address:  $_addr"
+  [ -n "$_jc" ] && info "Junk:     Jc=$_jc Jmin=${_jmin:-?} Jmax=${_jmax:-?}"
+  [ -n "$_i1" ] && info "I1:       $(show_i1_brief "$_i1")"
+
+  echo
+  if ! confirm_Y "Показать QR-код conf в терминале?"; then
+    return 0
+  fi
+
+  if ! command -v qrencode >/dev/null 2>&1; then
+    if ! command -v opkg >/dev/null 2>&1; then
+      error "Нет qrencode и нет opkg — QR недоступен."
+      return 1
+    fi
+    info "Установка qrencode (opkg install qrencode)…"
+    # PATH Entware
+    export PATH="/opt/bin:/opt/sbin:${PATH}"
+    if ! opkg install qrencode 2>&1; then
+      warn "opkg install qrencode не удался — пробуем update…"
+      opkg update 2>/dev/null || true
+      if ! opkg install qrencode 2>&1; then
+        error "Не удалось установить qrencode."
+        return 1
+      fi
+    fi
+    hash -r 2>/dev/null || true
+    if ! command -v qrencode >/dev/null 2>&1; then
+      # иногда бинарь только в /opt/bin
+      if [ -x /opt/bin/qrencode ]; then
+        :
+      else
+        error "qrencode установлен, но не найден в PATH."
+        return 1
+      fi
+    fi
+    info "qrencode установлен."
+  fi
+
+  info "QR (qrencode -t ANSIUTF8)…"
+  if [ "$sz" -gt 1200 ]; then
+    warn "Conf большой (${sz} байт) — QR может не читаться камерой."
+  fi
+  _qr=qrencode
+  command -v qrencode >/dev/null 2>&1 || _qr=/opt/bin/qrencode
+  if ! "$_qr" -t ANSIUTF8 < "$CONF_OUT" 2>/dev/null; then
+    if ! "$_qr" -t ANSI < "$CONF_OUT" 2>/dev/null; then
+      error "qrencode не смог построить QR."
+      return 1
+    fi
+  fi
+  return 0
+}
+
 main_menu() {
   while true; do
     clear 2>/dev/null || true
@@ -2495,6 +2576,11 @@ main_menu() {
         "$DIM" "$NC" "$DIM" "$NC"
     fi
     echo "  6) Проверка туннеля"
+    if has_conf; then
+      echo "  7) Показать сохранённый conf"
+    else
+      printf '  %s7) Показать сохранённый conf%s  %s(нет conf)%s\n' "$DIM" "$NC" "$DIM" "$NC"
+    fi
     printf '%s\n' "${DIM}  ──────────────────────────────────────────${NC}"
     echo "  88) Удаление"
     echo "  0) Выход"
@@ -2517,6 +2603,7 @@ main_menu() {
         fi
         ;;
       6) do_check_tunnel; pause ;;
+      7) do_show_conf; pause ;;
       88) do_remove; pause ;;
       0|"") info "Выход."; exit 0 ;;
       *) warn "Неверный пункт"; pause ;;
