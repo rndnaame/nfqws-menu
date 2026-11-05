@@ -10,7 +10,7 @@
 
 set -e
 
-SCRIPT_VERSION="0.10.26"
+SCRIPT_VERSION="0.10.27"
 
 REPO_URL="https://github.com/rndnaame/nfqws-menu"
 RAW_BASE="https://raw.githubusercontent.com/rndnaame/nfqws-menu/main"
@@ -6706,9 +6706,17 @@ upd_local() {
   return 0
 }
 
+# Нормализация для сравнения: v1.2.3+r3 → 1.2.3; 1.2.3-1 → 1.2.3
+# (build +r3 / opkg -N не считаются «новее upstream»).
+ver_norm() {
+  printf '%s' "$1" | sed -e 's/^[vV]//' -e 's/+.*//' -e 's/-[0-9][0-9]*$//'
+}
+
 # Сравнение версий a > b (semver-подобно: 1.2.10 > 1.2.9). 0 = да.
 ver_gt() {
-  local a="$1" b="$2" ia ib n=1
+  local a b ia ib n=1
+  a=$(ver_norm "$1")
+  b=$(ver_norm "$2")
   [ -n "$a" ] && [ -n "$b" ] || return 1
   [ "$a" = "$b" ] && return 1
   while [ $n -le 8 ]; do
@@ -6750,15 +6758,19 @@ upd_mark() {
   return 0
 }
 
-# Подпись к меткам — печатается, только если хоть одна метка есть.
+# Подпись к меткам — только если есть обновления; перечисляет пакеты.
 upd_legend() {
-  local key rest
+  local key rest remote has=0
   [ -f "$UPD_CACHE" ] || return 0
   while read -r key rest; do
     case "$key" in ''|checked) continue ;; esac
     [ -n "$(upd_mark "$key")" ] || continue
-    printf '  %s%s%s\n' "$DIM" "$LBL_UPD_LEGEND" "$NC"
-    return 0
+    if [ "$has" -eq 0 ]; then
+      printf '  %s%s%s\n' "$DIM" "$LBL_UPD_LEGEND" "$NC"
+      has=1
+    fi
+    remote=$(upd_remote "$key")
+    printf '  %s  %s → %s%s%s\n' "$DIM" "$key" "$GREEN" "$remote" "$NC"
   done < "$UPD_CACHE"
   return 0
 }
