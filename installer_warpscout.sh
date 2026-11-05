@@ -19,7 +19,7 @@
 #   sh installer_warpscout.sh
 #   curl -fsSL https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/installer_warpscout.sh | sh
 
-SCRIPT_VERSION="0.1.36"
+SCRIPT_VERSION="0.1.37"
 
 # ANSI (portable для ash/BusyBox)
 RED=$(printf '\033[0;31m')
@@ -43,10 +43,9 @@ JUNK_FILE="/opt/root/warpscout-junk.env"
 # rndnaame — сборки mipsel + arm; vernette — официальный upstream (arm)
 GITHUB_REPO="rndnaame/warpscout"
 OFFICIAL_REPO="vernette/warpscout"
-# fallback, если GitHub API недоступен (без «.001» — такого релиза нет)
+# fallback, если GitHub API недоступен
 PIN_VERSION="0.16.1"
 MIPSEL_BIN_FALLBACK="https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/warpscout/warpscout-0.16.1-mipsle"
-# заполняется resolve_release_version
 WS_VERSION=""
 WS_VERSION_SOURCE=""
 AWG_SETTINGS="/opt/etc/awg-manager/settings.json"
@@ -231,69 +230,110 @@ _http_get_one() {
 }
 
 http_get() {
+  # http_get URL DEST [quiet]
   url="$1"
   dest="$2"
+  quiet="${3:-}"
   if ! command -v curl >/dev/null 2>&1 && ! command -v wget >/dev/null 2>&1; then
     error "Нужны curl или wget."
     return 1
   fi
   rm -f "$dest"
+  n=0
   for alt in $(github_alt_urls "$url"); do
     [ -n "$alt" ] || continue
-    info "Пробуем: $alt"
+    n=$((n + 1))
+    if [ -z "$quiet" ]; then
+      info "Пробуем [$n]: $alt"
+    fi
     if _http_get_one "$alt" "$dest" && [ -s "$dest" ]; then
-      [ "$alt" != "$url" ] && info "Скачано через зеркало"
+      if [ -z "$quiet" ] && [ "$alt" != "$url" ]; then
+        info "Скачано через зеркало"
+      fi
       return 0
     fi
   done
   return 1
 }
 
-# Версия релиза без «v»: API latest → pin
-# RELEASE_VER выставляется глобально
+# tag_name latest release (с «v» или без)
 _fetch_tag_name() {
-  # _fetch_tag_name OWNER/REPO → tag (vX.Y.Z или X.Y.Z)
   repo="$1"
   api="https://api.github.com/repos/${repo}/releases/latest"
   body=""
   if command -v curl >/dev/null 2>&1; then
-    body=$(curl -fsS --connect-timeout 3 --max-time 8       -H "Accept: application/vnd.github+json" "$api" 2>/dev/null) || body=""
+    body=$(curl -fsS --connect-timeout 3 --max-time 8 \
+      -H "Accept: application/vnd.github+json" "$api" 2>/dev/null) || body=""
     if [ -z "$body" ]; then
-      body=$(curl -fsS --connect-timeout 3 --max-time 8         -H "Accept: application/vnd.github+json"         "https://ghproxy.net/${api}" 2>/dev/null) || body=""
+      body=$(curl -fsS --connect-timeout 3 --max-time 8 \
+        -H "Accept: application/vnd.github+json" \
+        "https://ghproxy.net/${api}" 2>/dev/null) || body=""
     fi
   fi
   [ -n "$body" ] || return 1
-  printf '%s' "$body" | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1
+  # первое tag_name в JSON latest
+  printf '%s' "$body" | tr ',' '\n' | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1
 }
 
+# WS_VERSION / WS_VERSION_SOURCE: api → pin 0.16.1
 resolve_release_version() {
   WS_VERSION=""
   WS_VERSION_SOURCE=""
   tag=$(_fetch_tag_name "$GITHUB_REPO" 2>/dev/null) || tag=""
   if [ -n "$tag" ]; then
     WS_VERSION=$(printf '%s' "$tag" | sed 's/^[vV]//')
-    WS_VERSION_SOURCE="api:${GITHUB_REPO}"
+    WS_VERSION_SOURCE="api"
   fi
-  if [ -z "$WS_VERSION" ]; then
-    WS_VERSION="$PIN_VERSION"
-    WS_VERSION_SOURCE="pin"
-  fi
-  # отсечь мусор
   case "$WS_VERSION" in
-    *[!0-9.]*|'')
+    [0-9]*.[0-9]*) ;;
+    *)
       WS_VERSION="$PIN_VERSION"
       WS_VERSION_SOURCE="pin"
       ;;
   esac
 }
 
-# URL ассета tar.gz: repo, version, arch_suffix (linux_arm64|linux_mipsle)
+# https://github.com/REPO/releases/download/vVER/warpscout_VER_SUFFIX.tar.gz
 release_asset_url() {
-  repo="$1"
-  ver="$2"
-  suffix="$3"
-  printf 'https://github.com/%s/releases/download/v%s/warpscout_%s_%s.tar.gz'     "$repo" "$ver" "$ver" "$suffix"
+  printf 'https://github.com/%s/releases/download/v%s/warpscout_%s_%s.tar.gz' \
+    "$1" "$2" "$2" "$3"
 }
+
+# Скачать tar.gz и найти bin warpscout → INSTALL_SRC
+install_from_tarball() {
+  url="$1"
+  label="$2"
+  archive="$TMPDIR/warpscout.tar.gz"
+  INSTALL_SRC=""
+  rm -f "$archive" "$TMPDIR/warpscout" 2>/dev/null || true
+  info "$label"
+  if ! http_get "$url" "$archive"; then
+    return 1
+  fi
+  sz=$(wc -c < "$archive" 2>/dev/null | tr -d ' ')
+  case "$sz" in ''|*[!0-9]*) sz=0 ;; esac
+  if [ "$sz" -lt 100000 ]; then
+    warn "Архив слишком маленький (${sz} байт)."
+    return 1
+  fi
+  info "Распаковка (${sz} байт)..."
+  if ! tar -xzf "$archive" -C "$TMPDIR" 2>/dev/null; then
+    warn "Не удалось распаковать архив."
+    return 1
+  fi
+  if [ -f "$TMPDIR/warpscout" ]; then
+    INSTALL_SRC="$TMPDIR/warpscout"
+  else
+    INSTALL_SRC=$(find "$TMPDIR" -type f -name 'warpscout' 2>/dev/null | head -1)
+  fi
+  if [ -z "$INSTALL_SRC" ] || [ ! -f "$INSTALL_SRC" ]; then
+    warn "В архиве не найден бинарник warpscout."
+    INSTALL_SRC=""
+    return 1
+  fi
+  return 0
+}
+
 
 # ---------------------------------------------------------------------------
 # UI helpers
@@ -403,89 +443,44 @@ do_install() {
   mkdir -p /opt/bin /opt/root "$TMPDIR" 2>/dev/null || true
 
   resolve_release_version
-  info "Версия для установки: v${WS_VERSION} (${WS_VERSION_SOURCE})"
+  info "Версия: v${WS_VERSION} (${WS_VERSION_SOURCE})"
 
-  _install_from_tarball() {
-    url="$1"
-    label="$2"
-    archive="$TMPDIR/warpscout.tar.gz"
-    rm -f "$archive" "$TMPDIR/warpscout" 2>/dev/null || true
-    info "${label}"
-    if ! http_get "$url" "$archive"; then
-      return 1
-    fi
-    sz=$(wc -c < "$archive" 2>/dev/null | tr -d ' ')
-    case "$sz" in ''|*[!0-9]*) sz=0 ;; esac
-    if [ "$sz" -lt 100000 ]; then
-      warn "Архив слишком маленький (${sz} байт)."
-      return 1
-    fi
-    info "Распаковка..."
-    # убрать старый bin из tmp, чтобы find не нашёл прошлый
-    rm -f "$TMPDIR/warpscout" 2>/dev/null || true
-    if ! tar -xzf "$archive" -C "$TMPDIR" 2>/dev/null; then
-      warn "Не удалось распаковать архив."
-      return 1
-    fi
-    src=""
-    if [ -f "$TMPDIR/warpscout" ]; then
-      src="$TMPDIR/warpscout"
-    else
-      src=$(find "$TMPDIR" -type f -name 'warpscout' 2>/dev/null | head -1)
-    fi
-    if [ -z "$src" ] || [ ! -f "$src" ]; then
-      warn "В архиве не найден бинарник warpscout."
-      return 1
-    fi
-    INSTALL_SRC="$src"
-    return 0
-  }
-
-  INSTALL_SRC=""
   src=""
   case "$ARCH" in
     aarch64)
       info "Архитектура: aarch64"
       url=$(release_asset_url "$GITHUB_REPO" "$WS_VERSION" "linux_arm64")
-      if ! _install_from_tarball "$url" "${GITHUB_REPO} v${WS_VERSION} linux_arm64"; then
-        # upstream: та же версия, иначе pin
-        uver="$WS_VERSION"
-        url=$(release_asset_url "$OFFICIAL_REPO" "$uver" "linux_arm64")
-        warn "Пробуем upstream ${OFFICIAL_REPO} v${uver}..."
-        if ! _install_from_tarball "$url" "${OFFICIAL_REPO} v${uver} linux_arm64"; then
-          if [ "$uver" != "$PIN_VERSION" ]; then
-            url=$(release_asset_url "$OFFICIAL_REPO" "$PIN_VERSION" "linux_arm64")
-            warn "Пробуем upstream pin v${PIN_VERSION}..."
-            _install_from_tarball "$url" "${OFFICIAL_REPO} v${PIN_VERSION} linux_arm64" || true
+      if install_from_tarball "$url" "${GITHUB_REPO} · linux_arm64"; then
+        src="$INSTALL_SRC"
+      else
+        url=$(release_asset_url "$OFFICIAL_REPO" "$WS_VERSION" "linux_arm64")
+        warn "Fallback upstream ${OFFICIAL_REPO}..."
+        if install_from_tarball "$url" "${OFFICIAL_REPO} · linux_arm64"; then
+          src="$INSTALL_SRC"
+        elif [ "$WS_VERSION" != "$PIN_VERSION" ]; then
+          url=$(release_asset_url "$OFFICIAL_REPO" "$PIN_VERSION" "linux_arm64")
+          if install_from_tarball "$url" "${OFFICIAL_REPO} · pin v${PIN_VERSION}"; then
+            src="$INSTALL_SRC"
           fi
         fi
-      fi
-      src="$INSTALL_SRC"
-      if [ -z "$src" ] || [ ! -f "$src" ]; then
-        error "Не удалось скачать arm64-сборку."
-        return 1
       fi
       ;;
     mipsel)
       info "Архитектура: mipsel"
       url=$(release_asset_url "$GITHUB_REPO" "$WS_VERSION" "linux_mipsle")
-      if _install_from_tarball "$url" "${GITHUB_REPO} v${WS_VERSION} linux_mipsle"; then
+      if install_from_tarball "$url" "${GITHUB_REPO} · linux_mipsle"; then
         src="$INSTALL_SRC"
-      else
-        # pin той же схемы, если API отдал странный tag
-        if [ "$WS_VERSION" != "$PIN_VERSION" ]; then
-          url=$(release_asset_url "$GITHUB_REPO" "$PIN_VERSION" "linux_mipsle")
-          warn "Пробуем pin v${PIN_VERSION} mipsle..."
-          if _install_from_tarball "$url" "${GITHUB_REPO} v${PIN_VERSION} linux_mipsle"; then
-            src="$INSTALL_SRC"
-          fi
+      elif [ "$WS_VERSION" != "$PIN_VERSION" ]; then
+        url=$(release_asset_url "$GITHUB_REPO" "$PIN_VERSION" "linux_mipsle")
+        if install_from_tarball "$url" "${GITHUB_REPO} · pin v${PIN_VERSION}"; then
+          src="$INSTALL_SRC"
         fi
       fi
       if [ -z "$src" ] || [ ! -f "$src" ]; then
-        warn "Релиз tar.gz недоступен — raw mipsel-bin (nfqws-menu)..."
+        warn "Release недоступен — raw mipsel-bin..."
         src="$TMPDIR/warpscout"
         if ! http_get "$MIPSEL_BIN_FALLBACK" "$src"; then
-          error "Не удалось скачать mipsel (release + raw fallback)."
+          error "Не удалось скачать mipsel."
           return 1
         fi
         sz=$(wc -c < "$src" 2>/dev/null | tr -d ' ')
@@ -502,10 +497,14 @@ do_install() {
       ;;
   esac
 
+  if [ -z "$src" ] || [ ! -f "$src" ]; then
+    error "Бинарник не получен."
+    return 1
+  fi
+
   if [ -x "$BIN" ]; then
     cp -f "$BIN" "${BIN}.bak" 2>/dev/null || true
   fi
-
   if ! cp -f "$src" "$BIN"; then
     error "Не удалось скопировать в $BIN"
     return 1
@@ -514,9 +513,7 @@ do_install() {
 
   ver=$(installed_version 2>/dev/null) || ver=""
   info "Установлено: $BIN ${ver:+(v$ver)}"
-  printf '%s\n' "${DIM}Релиз: v${WS_VERSION} (${WS_VERSION_SOURCE})${NC}"
-  printf '%s\n' "${DIM}Источник: https://github.com/${GITHUB_REPO}${NC}"
-  printf '%s\n' "${DIM}Upstream: https://github.com/${OFFICIAL_REPO}${NC}"
+  printf '%s\n' "${DIM}Релиз: v${WS_VERSION} (${WS_VERSION_SOURCE}) · ${GITHUB_REPO}${NC}"
   return 0
 }
 
@@ -785,7 +782,7 @@ do_apply_junk() {
   echo
   info "Применение junk-параметров"
   if ! load_junk_params; then
-    error "Нет $JUNK_FILE — сначала п.6 find-junk."
+    error "Нет $JUNK_FILE — сначала п.4 find-junk."
     return 1
   fi
   info "Текущие: jc=${JC:-?} jmin=${JMIN:-?} jmax=${JMAX:-?}"
@@ -943,7 +940,7 @@ do_scan() {
     [ -n "$JMAX" ] && set -- "$@" -jmax "$JMAX"
     [ -n "$I1" ] && set -- "$@" -i1 "$I1"
   else
-    info "Junk-параметры не заданы (п.6 find-junk) — дефолты warpscout."
+    info "Junk-параметры не заданы (п.4 find-junk) — дефолты warpscout."
   fi
 
   info "Команда: warpscout $*"
