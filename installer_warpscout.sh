@@ -19,7 +19,7 @@
 #   sh installer_warpscout.sh
 #   curl -fsSL https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/installer_warpscout.sh | sh
 
-SCRIPT_VERSION="0.1.38"
+SCRIPT_VERSION="0.1.39"
 
 # ANSI (portable для ash/BusyBox)
 RED=$(printf '\033[0;31m')
@@ -40,6 +40,7 @@ ACCOUNT_FILE="/opt/root/warpscout-account.json"
 SCAN_OUT="/opt/root/warpscout-awg.list"
 CONF_OUT="/opt/root/warpscout-awg.conf"
 JUNK_FILE="/opt/root/warpscout-junk.env"
+FIND_JUNK_LOG="/opt/root/warpscout-find-junk.log"
 # rndnaame — сборки mipsel + arm; vernette — официальный upstream (arm)
 GITHUB_REPO="rndnaame/warpscout"
 OFFICIAL_REPO="vernette/warpscout"
@@ -595,27 +596,59 @@ save_junk_params() {
 
 # Разобрать лог find-junk → JC JMIN JMAX I1
 parse_find_junk_log() {
+  # Лучший Attempt по N/M working; либо Good enough / scan -jc
   logf="$1"
   [ -f "$logf" ] || return 1
   JC=""; JMIN=""; JMAX=""; I1=""
-  line=$(grep -E 'scan .*(-jc|--jc)' "$logf" 2>/dev/null | tail -1)
-  if [ -z "$line" ]; then
-    line=$(grep -E 'Good enough:.*jc=' "$logf" 2>/dev/null | tail -1)
+
+  # 1) готовая команда scan / Good enough
+  line=$(grep -E 'scan .*(-jc|--jc)|Good enough:.*jc=' "$logf" 2>/dev/null | tail -1)
+  if [ -n "$line" ]; then
+    JC=$(printf '%s\n' "$line" | sed -n 's/.*-jc[[:space:]]\+\([0-9][0-9]*\).*/\1/p;s/.*jc=\([0-9][0-9]*\).*/\1/p' | head -1)
+    JMIN=$(printf '%s\n' "$line" | sed -n 's/.*-jmin[[:space:]]\+\([0-9][0-9]*\).*/\1/p;s/.*jmin=\([0-9][0-9]*\).*/\1/p' | head -1)
+    JMAX=$(printf '%s\n' "$line" | sed -n 's/.*-jmax[[:space:]]\+\([0-9][0-9]*\).*/\1/p;s/.*jmax=\([0-9][0-9]*\).*/\1/p' | head -1)
+    I1=$(printf '%s\n' "$line" | sed -n 's/.*-i1[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
+    [ -z "$I1" ] && I1=$(printf '%s\n' "$line" | sed -n "s/.*-i1[[:space:]]*'\\([^']*\\)'.*/\\1/p" | head -1)
   fi
-  if [ -z "$line" ]; then
-    line=$(grep -E 'Attempt [0-9]+: jc=' "$logf" 2>/dev/null | tail -1)
+
+  # 2) иначе — Attempt с максимальным N в «N/M working»
+  if [ -z "$JC" ]; then
+    best_n=-1
+    best_line=""
+    while IFS= read -r al || [ -n "$al" ]; do
+      case "$al" in
+        *"Attempt "*"jc="*) ;;
+        *) continue ;;
+      esac
+      n=$(printf '%s\n' "$al" | sed -n 's/.*[[:space:]]\([0-9][0-9]*\)\/[0-9][0-9]*[[:space:]]*working.*/\1/p' | head -1)
+      case "$n" in ''|*[!0-9]*) n=0 ;; esac
+      if [ "$n" -gt "$best_n" ]; then
+        best_n=$n
+        best_line=$al
+      fi
+    done <<EOF
+$(grep -E 'Attempt [0-9]+:[[:space:]]*jc=' "$logf" 2>/dev/null)
+EOF
+    if [ -n "$best_line" ] && [ "$best_n" -ge 0 ]; then
+      line=$best_line
+      JC=$(printf '%s\n' "$line" | sed -n 's/.*jc=\([0-9][0-9]*\).*/\1/p' | head -1)
+      JMIN=$(printf '%s\n' "$line" | sed -n 's/.*jmin=\([0-9][0-9]*\).*/\1/p' | head -1)
+      JMAX=$(printf '%s\n' "$line" | sed -n 's/.*jmax=\([0-9][0-9]*\).*/\1/p' | head -1)
+      # score в подсказку
+      FIND_JUNK_SCORE="${best_n}"
+    fi
   fi
-  [ -n "$line" ] || return 1
-  JC=$(printf '%s\n' "$line" | sed -n 's/.*[[:space:]]-jc[[:space:]]\+\([0-9][0-9]*\).*/\1/p; t; s/.*jc=\([0-9][0-9]*\).*/\1/p' | head -1)
-  JMIN=$(printf '%s\n' "$line" | sed -n 's/.*[[:space:]]-jmin[[:space:]]\+\([0-9][0-9]*\).*/\1/p; t; s/.*jmin=\([0-9][0-9]*\).*/\1/p' | head -1)
-  JMAX=$(printf '%s\n' "$line" | sed -n 's/.*[[:space:]]-jmax[[:space:]]\+\([0-9][0-9]*\).*/\1/p; t; s/.*jmax=\([0-9][0-9]*\).*/\1/p' | head -1)
-  I1=$(printf '%s\n' "$line" | sed -n 's/.*-i1[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
+
+  # i1 из Ready-to-run, если ещё нет
   if [ -z "$I1" ]; then
-    I1=$(printf '%s\n' "$line" | sed -n "s/.*-i1[[:space:]]*'\([^']*\)'.*/\1/p" | head -1)
+    I1=$(grep -E 'Ready-to-run scan|-i1 "' "$logf" 2>/dev/null | tail -1 | \
+      sed -n 's/.*-i1[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
   fi
+
   [ -n "$JC" ] || return 1
   return 0
 }
+
 
 
 # Прописать Jc/Jmin/Jmax/I1 в conf (секция [Interface])
@@ -880,12 +913,20 @@ do_find_junk() {
 
   mkdir -p /opt/root "$TMPDIR" 2>/dev/null || true
   cd /opt/root || true
-  logf="$TMPDIR/find-junk.log"
+  # лог вне TMPDIR — переживает Ctrl+C / trap cleanup
+  logf="$FIND_JUNK_LOG"
+  : > "$logf"
 
   info "Команда: warpscout find-junk -gen-i1 $gen_i1"
-  info "Поиск может занять много времени. Ctrl+C / q — сохранить лучший набор."
+  info "Долго. Ctrl+C — остановить и взять лучший Attempt из лога."
+  printf '%s\n' "${DIM}Лог: $logf${NC}"
   echo
-  # вывод на экран + в лог
+
+  # на время поиска не сносим tmp/лог по INT (только помечаем)
+  FIND_JUNK_INT=0
+  _find_junk_on_int() { FIND_JUNK_INT=1; }
+  trap '_find_junk_on_int' INT
+  rc=0
   if command -v tee >/dev/null 2>&1; then
     "$BIN" find-junk -gen-i1 "$gen_i1" 2>&1 | tee "$logf"
     rc=$?
@@ -894,10 +935,19 @@ do_find_junk() {
     rc=$?
     cat "$logf" 2>/dev/null || true
   fi
+  # вернуть общий trap
+  trap '_cleanup_tmpdir' EXIT INT TERM HUP
   echo
 
+  FIND_JUNK_SCORE=""
   if parse_find_junk_log "$logf"; then
     save_junk_params "$JC" "$JMIN" "$JMAX" "$I1"
+    if [ -n "$FIND_JUNK_SCORE" ]; then
+      info "Лучший набор из лога: jc=$JC jmin=$JMIN jmax=$JMAX (${FIND_JUNK_SCORE} working)"
+    else
+      info "Параметры: jc=$JC jmin=$JMIN jmax=$JMAX"
+    fi
+    [ -n "$I1" ] && info "i1 сохранён (${#I1} символов)" || warn "i1 в логе нет (прервано до Ready-to-run) — jc/jmin/jmax всё равно сохранены"
     info "П.3 (scan) подхватит параметры автоматически."
     echo
     if confirm_Y "Применить junk к conf / туннелю сейчас?"; then
@@ -906,7 +956,9 @@ do_find_junk() {
   else
     warn "Не удалось разобрать jc/jmin/jmax из вывода find-junk."
     [ -f "$logf" ] && printf '%s\n' "${DIM}Лог: $logf${NC}"
-    [ "$rc" -ne 0 ] && return 1
+    if [ "$FIND_JUNK_INT" -eq 1 ] || [ "$rc" -ne 0 ]; then
+      return 1
+    fi
   fi
   return 0
 }
@@ -2109,6 +2161,7 @@ do_remove() {
     [ -f "$SCAN_OUT" ] && rm -f "$SCAN_OUT" && info "  удалён: $SCAN_OUT"
     [ -f "$CONF_OUT" ] && rm -f "$CONF_OUT" && info "  удалён: $CONF_OUT"
     [ -f "$JUNK_FILE" ] && rm -f "$JUNK_FILE" && info "  удалён: $JUNK_FILE"
+    [ -f "$FIND_JUNK_LOG" ] && rm -f "$FIND_JUNK_LOG" && info "  удалён: $FIND_JUNK_LOG"
   fi
 
   info "Готово."
