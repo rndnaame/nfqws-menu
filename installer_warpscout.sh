@@ -19,7 +19,7 @@
 #   sh installer_warpscout.sh
 #   curl -fsSL https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/installer_warpscout.sh | sh
 
-SCRIPT_VERSION="0.1.42"
+SCRIPT_VERSION="0.1.44"
 
 # ANSI (portable для ash/BusyBox)
 RED=$(printf '\033[0;31m')
@@ -34,6 +34,23 @@ NC=$(printf '\033[0m')
 info()  { printf '%s\n' "${GREEN}[+]${NC} $*"; }
 warn()  { printf '%s\n' "${YELLOW}[!]${NC} $*"; }
 error() { printf '%s\n' "${RED}[!]${NC} $*"; }
+
+# короткий вывод длинного I1
+show_i1_brief() {
+  # без \n — для встраивания в info/printf
+  _i1="$1"
+  if [ -z "$_i1" ]; then
+    printf '%s' "${DIM}(нет)${NC}"
+    return
+  fi
+  _n=${#_i1}
+  if [ "$_n" -le 48 ]; then
+    printf '%s' "$_i1"
+  else
+    _head=$(printf '%s' "$_i1" | head -c 40)
+    printf '%s… (%s симв.)' "$_head" "$_n"
+  fi
+}
 
 BIN="/opt/bin/warpscout"
 ACCOUNT_FILE="/opt/root/warpscout-account.json"
@@ -368,9 +385,42 @@ confirm_Y() {
 }
 
 pause() {
-  printf '%s' "${DIM}Нажмите Enter...${NC} "
-  read_choice >/dev/null
+  printf '%s' "Нажмите Enter..."
+  if [ -c /dev/tty ]; then
+    read -r _ < /dev/tty
+  else
+    read -r _
+  fi
 }
+
+ensure_tmpdir() {
+  mkdir -p "$TMPDIR" 2>/dev/null || true
+}
+
+# Строка меню туннеля (статус в конце, endpoint cyan)
+# print_tunnel_menu_line N KEY STATUS NAME [ADDR] [ENDPOINT] [GLOBAL]
+print_tunnel_menu_line() {
+  _n="$1"
+  _key="$2"
+  _st="${3:-?}"
+  _name="${4:-}"
+  _addr="${5:-}"
+  _ep="${6:-}"
+  _glob="${7:-false}"
+  if [ "$_glob" = "true" ]; then
+    _ncol="$GREEN"
+  else
+    _ncol="$DIM"
+  fi
+  printf '  %s%d)%s  %-8s' "$BOLD" "$_n" "$NC" "$_key"
+  if [ -n "$_name" ] && [ "$_name" != "$_key" ]; then
+    printf ' · %s%s%s' "$_ncol" "$_name" "$NC"
+  fi
+  [ -n "$_addr" ] && printf ' · %s' "$_addr"
+  [ -n "$_ep" ] && printf ' · %s%s%s' "$CYAN" "$_ep" "$NC"
+  printf '  %s[%s]%s\n' "$DIM" "$_st" "$NC"
+}
+
 
 is_installed() {
   [ -x "$BIN" ]
@@ -591,7 +641,7 @@ save_junk_params() {
   } > "$JUNK_FILE"
   info "Параметры сохранены: $JUNK_FILE"
   info "  -jc $1 -jmin $2 -jmax $3"
-  [ -n "$4" ] && info "  -i1 $4"
+  [ -n "$4" ] && info "  -i1 $(show_i1_brief "$4")"
 }
 
 # Разобрать лог find-junk → JC JMIN JMAX I1
@@ -702,7 +752,7 @@ patch_conf_junk() {
   [ -n "$JC" ] && info "  Jc = $JC"
   [ -n "$JMIN" ] && info "  Jmin = $JMIN"
   [ -n "$JMAX" ] && info "  Jmax = $JMAX"
-  [ -n "$I1" ] && info "  I1 = $I1"
+  [ -n "$I1" ] && info "  I1 = $(show_i1_brief "$I1")"
   return 0
 }
 
@@ -738,9 +788,7 @@ awg_replace_conf_file() {
   while IFS='|' read -r tid tname tstat tend taddr tifc tndms || [ -n "$tid" ]; do
     [ -n "$tid" ] || continue
     i=$((i + 1))
-    printf '  %s%d)%s  %s  %s[%s]%s  %s%s%s\n' \
-      "$BOLD" "$i" "$NC" "$tid" "$DIM" "$tstat" "$NC" \
-      "$tname" "${tend:+ · $tend}" "${taddr:+ · $taddr}"
+    print_tunnel_menu_line "$i" "$tid" "${tstat:-?}" "$tname" "$taddr" "$tend" "true"
   done < "$listf"
   echo "  0) Отмена"
   echo
@@ -816,7 +864,7 @@ do_apply_junk() {
     return 1
   fi
   info "Текущие: jc=${JC:-?} jmin=${JMIN:-?} jmax=${JMAX:-?}"
-  [ -n "$I1" ] && info "  i1=$I1"
+  [ -n "$I1" ] && info "  i1 = $(show_i1_brief "$I1")"
 
   echo
   printf '%s\n' "${BOLD}Куда применить:${NC}"
@@ -877,7 +925,7 @@ do_junk_from_tunnel() {
     return 1
   fi
   base=$(awg_api_base)
-  mkdir -p "$TMPDIR" 2>/dev/null || true
+  ensure_tmpdir
 
   # 1) список туннелей (list — без jc; детали подтянем после выбора)
   listf="$TMPDIR/junk-tun-list.txt"
@@ -889,12 +937,13 @@ do_junk_from_tunnel() {
   echo
   printf '%s\n' "${BOLD}Туннели awg-manager:${NC}"
   n=0
-  while IFS='|' read -r tid tname tstat _tend _taddr tifc _tndms || [ -n "$tid" ]; do
+  while IFS='|' read -r tid tname tstat tend taddr tifc _tndms || [ -n "$tid" ]; do
     [ -n "$tid" ] || continue
     n=$((n + 1))
-    printf '  %s%d)%s  %s  %s[%s]%s  %s%s\n' \
-      "$BOLD" "$n" "$NC" "$tid" "$DIM" "${tstat:-?}" "$NC" \
-      "${tname:-?}" "${tifc:+ · $tifc}"
+    # key=id, show ifc in name area if useful
+    _label="$tname"
+    [ -n "$tifc" ] && [ "$tifc" != "$tname" ] && _label="${tname} · ${tifc}"
+    print_tunnel_menu_line "$n" "$tid" "${tstat:-?}" "$_label" "$taddr" "$tend" "true"
   done < "$listf"
   echo "  0) Отмена"
   echo
@@ -1743,9 +1792,7 @@ do_apply_awg() {
     while IFS='|' read -r tid tname tstat tend taddr tifc tndms || [ -n "$tid" ]; do
       [ -n "$tid" ] || continue
       i=$((i + 1))
-      printf '  %s%d)%s  %s  %s[%s]%s  %s%s%s\n' \
-        "$BOLD" "$i" "$NC" "$tid" "$DIM" "$tstat" "$NC" \
-        "${tname}${tend:+ · $tend}" "${taddr:+ · $taddr}" "${tifc:+ · $tifc}"
+      print_tunnel_menu_line "$i" "$tid" "${tstat:-?}" "$tname" "$taddr" "$tend" "true"
     done < "$listf"
   fi
   new_idx=$((i + 1))
@@ -2085,9 +2132,9 @@ do_check_tunnel() {
     return 1
   fi
 
-  # ifc|name|status|addr
+  ensure_tmpdir
+  # ifc|name|status|addr|global|endpoint
   iflistf="$TMPDIR/ifaces.txt"
-  mkdir -p "$TMPDIR" 2>/dev/null || true
   : > "$iflistf"
 
   # --- один запрос RCI: имена + адреса + link ---
@@ -2204,21 +2251,7 @@ do_check_tunnel() {
       while IFS='|' read -r ifc tlab tstat taddr tglob tend || [ -n "$ifc" ]; do
         [ -n "$ifc" ] || continue
         n=$((n + 1))
-        extra="$tlab"
-        [ "$extra" = "$ifc" ] && extra=""
-        if [ "$tglob" = "true" ]; then
-          ncol="$GREEN"
-        else
-          ncol="$DIM"
-        fi
-        # ifc · name · addr · endpoint  [status]
-        printf '  %s%d)%s  %-8s' "$BOLD" "$n" "$NC" "$ifc"
-        if [ -n "$extra" ]; then
-          printf ' · %s%s%s' "$ncol" "$extra" "$NC"
-        fi
-        [ -n "$taddr" ] && printf ' · %s' "$taddr"
-        [ -n "$tend" ] && printf ' · %s%s%s' "$CYAN" "$tend" "$NC"
-        printf '  %s[%s]%s\n' "$DIM" "${tstat:-?}" "$NC"
+        print_tunnel_menu_line "$n" "$ifc" "${tstat:-?}" "$tlab" "$taddr" "$tend" "${tglob:-false}"
       done < "$iflistf"
       echo "  0) Выход"
       echo
