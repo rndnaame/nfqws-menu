@@ -864,8 +864,8 @@ echo "Generating API auth_header..."
 AUTH_HEADER=$(openssl rand -hex 32)
 echo "Generated auth_header: $AUTH_HEADER"
 
-echo "Выберите интерфейс, через который прокси будет выходить в мир"
-echo "(рекомендуется: $DEF_IFACE — default route)"
+echo "Выберите интерфейс(ы), через который прокси будет выходить в мир"
+echo "(рекомендуется: $DEF_IFACE — default route; можно несколько через запятую/пробел)"
 
 _is_junk_iface() {
     case "$1" in
@@ -990,48 +990,72 @@ done
 rm -f "$_RCI_DESC_FILE" 2>/dev/null || true
 
 COUNT=$((i-1))
+UP_IFACES=""
 if [ "$COUNT" -lt 1 ]; then
     echo "WARNING: не найдено подходящих интерфейсов, используем $DEF_IFACE"
-    UP_IFACE="$DEF_IFACE"
+    UP_IFACES="$DEF_IFACE"
 else
-    printf "Интерфейс (номер 1-%s или имя, по умолчанию 1 = %s): " "$COUNT" "$DEF_IFACE"
+    echo "Можно указать несколько: 1,4 или 4 5 или nwg0,t2s0"
+    printf "Интерфейс(ы) (номер 1-%s или имя, по умолчанию 1 = %s): " "$COUNT" "$DEF_IFACE"
     read IFSEL || true
-    IFSEL=$(echo "${IFSEL:-1}" | tr -d ' \t\r')
-    UP_IFACE=""
-    # число из списка
-    if [ "$IFSEL" -ge 1 ] 2>/dev/null && [ "$IFSEL" -le "$COUNT" ] 2>/dev/null; then
-        eval "UP_IFACE=\$iface_$IFSEL"
-    else
-        # имя интерфейса (eth3, ppp0, nwg1, ...)
-        case "$IFSEL" in
-            *@*) IFSEL=$(echo "$IFSEL" | cut -d'@' -f1) ;;
+    IFSEL=$(echo "${IFSEL:-1}" | tr ',' ' ' | tr -s ' \t' ' ' | sed 's/^ //;s/ $//')
+    [ -z "$IFSEL" ] && IFSEL=1
+    for tok in $IFSEL; do
+        _one=""
+        case "$tok" in
+            *@*) tok=$(echo "$tok" | cut -d'@' -f1) ;;
         esac
-        # есть в нашем списке?
-        for iface in $_IFACE_LIST; do
-            if [ "$iface" = "$IFSEL" ]; then
-                UP_IFACE="$IFSEL"
-                break
-            fi
-        done
-        # вручную: проверяем существование в системе
-        if [ -z "$UP_IFACE" ]; then
-            if ip link show dev "$IFSEL" >/dev/null 2>&1; then
-                UP_IFACE="$IFSEL"
-                echo "Интерфейс $UP_IFACE принят (вне списка)."
-            else
-                echo "Интерфейс '$IFSEL' не найден — используем default: $DEF_IFACE"
-                UP_IFACE="$DEF_IFACE"
+        # номер из списка
+        if echo "$tok" | grep -qE '^[0-9]+$' && [ "$tok" -ge 1 ] 2>/dev/null && [ "$tok" -le "$COUNT" ] 2>/dev/null; then
+            eval "_one=\$iface_$tok"
+        else
+            # имя в нашем списке
+            for iface in $_IFACE_LIST; do
+                if [ "$iface" = "$tok" ]; then
+                    _one="$tok"
+                    break
+                fi
+            done
+            # вручную: есть в системе
+            if [ -z "$_one" ]; then
+                if ip link show dev "$tok" >/dev/null 2>&1; then
+                    _one="$tok"
+                    echo "Интерфейс $_one принят (вне списка)."
+                else
+                    echo "WARNING: интерфейс '$tok' не найден — пропуск."
+                fi
             fi
         fi
-    fi
+        if [ -n "$_one" ]; then
+            # уникальность
+            case " $UP_IFACES " in
+                *" $_one "*) ;;
+                *) UP_IFACES="$UP_IFACES $_one" ;;
+            esac
+        fi
+    done
+    UP_IFACES=$(echo "$UP_IFACES" | sed 's/^ //;s/ $//')
 fi
-UP_IFACE=${UP_IFACE:-$DEF_IFACE}
-# финальная проверка
-if ! ip link show dev "$UP_IFACE" >/dev/null 2>&1; then
-    echo "ERROR: интерфейс '$UP_IFACE' не существует в системе!"
+if [ -z "$UP_IFACES" ]; then
+    UP_IFACES="$DEF_IFACE"
+fi
+# финальная проверка каждого
+_ok_list=""
+for _u in $UP_IFACES; do
+    if ip link show dev "$_u" >/dev/null 2>&1; then
+        _ok_list="$_ok_list $_u"
+    else
+        echo "WARNING: '$_u' не существует — пропуск."
+    fi
+done
+UP_IFACES=$(echo "$_ok_list" | sed 's/^ //;s/ $//')
+if [ -z "$UP_IFACES" ]; then
+    echo "ERROR: ни один upstream-интерфейс не выбран!"
     exit 1
 fi
-echo "Selected interface: $UP_IFACE"
+# совместимость: первый интерфейс
+UP_IFACE=$(echo "$UP_IFACES" | awk '{print $1}')
+echo "Selected interface(s): $UP_IFACES"
 
 while true; do
     echo "Checking if port $PORT is free..."
@@ -1108,10 +1132,16 @@ mask_shape_hardening_aggressive_mode = true
 [access.users]
 $USERNAME = "$USER_SECRET"
 
+EOF
+
+# несколько [[upstreams]] — по одному на каждый выбранный интерфейс
+for _u in $UP_IFACES; do
+    cat >> config.toml <<UPEOF
 [[upstreams]]
 type = "direct"
-bindtodevice = "$UP_IFACE"
-EOF
+bindtodevice = "$_u"
+UPEOF
+done
 
 start_telemt || true
 
@@ -1124,7 +1154,7 @@ echo "Public host (links): $PUBLIC_HOST"
 echo "TLS domain: $TLS_DOMAIN"
 echo "User: $USERNAME"
 echo "Secret: $USER_SECRET"
-echo "Upstream interface: $UP_IFACE"
+echo "Upstream interface(s): $UP_IFACES"
 echo "tlsfront directory: $CONFIG_DIR/tlsfront"
 echo "Log: /tmp/log/telemt.log"
 echo ""
