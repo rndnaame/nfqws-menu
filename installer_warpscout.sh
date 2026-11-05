@@ -19,7 +19,7 @@
 #   sh installer_warpscout.sh
 #   curl -fsSL https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/installer_warpscout.sh | sh
 
-SCRIPT_VERSION="0.1.40"
+SCRIPT_VERSION="0.1.41"
 
 # ANSI (portable для ash/BusyBox)
 RED=$(printf '\033[0;31m')
@@ -877,56 +877,24 @@ do_junk_from_tunnel() {
     return 1
   fi
   base=$(awg_api_base)
-  resp=$(curl -sS --connect-timeout 3 --max-time 10 \
-    -H "Authorization: Bearer ${AWG_KEY}" \
-    "${base}/tunnels/list" 2>/dev/null) || resp=""
-  if [ -z "$resp" ]; then
-    error "Пустой ответ ${base}/tunnels/list"
-    return 1
-  fi
-
-  listf="$TMPDIR/junk-from-tun.txt"
   mkdir -p "$TMPDIR" 2>/dev/null || true
-  : > "$listf"
-  tmpc="$TMPDIR/junk-from-tun.chunks"
-  printf '%s' "$resp" | tr '{' '\n' > "$tmpc" 2>/dev/null || true
-  while IFS= read -r chunk || [ -n "$chunk" ]; do
-    case "$chunk" in *'"id"'*) ;; *) continue ;; esac
-    tid=$(printf '%s' "$chunk" | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
-    [ -n "$tid" ] || continue
-    tstat=$(printf '%s' "$chunk" | sed -n 's/.*"status"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
-    [ -n "$tstat" ] || continue
-    tname=$(printf '%s' "$chunk" | sed -n 's/.*"name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
-    tifc=$(printf '%s' "$chunk" | sed -n 's/.*"interfaceName"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
-    # jc/jmin/jmax — числа без кавычек в JSON
-    tjc=$(printf '%s' "$chunk" | sed -n 's/.*"jc"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' | head -1)
-    tjmin=$(printf '%s' "$chunk" | sed -n 's/.*"jmin"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' | head -1)
-    tjmax=$(printf '%s' "$chunk" | sed -n 's/.*"jmax"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' | head -1)
-    ti1=$(printf '%s' "$chunk" | sed -n 's/.*"i1"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
-    # только если есть хотя бы jc
-    [ -n "$tjc" ] || continue
-    # id|name|status|ifc|jc|jmin|jmax|i1
-    printf '%s|%s|%s|%s|%s|%s|%s|%s\n' \
-      "$tid" "${tname:-?}" "${tstat:-?}" "${tifc:-}" \
-      "$tjc" "${tjmin}" "${tjmax}" "${ti1}" >> "$listf"
-  done < "$tmpc"
-  rm -f "$tmpc" 2>/dev/null || true
 
-  if [ ! -s "$listf" ]; then
-    error "Нет туннелей с Jc/Jmin/Jmax в awg-manager."
+  # 1) список туннелей (list — без jc; детали подтянем после выбора)
+  listf="$TMPDIR/junk-tun-list.txt"
+  if ! awg_list_tunnels "$base" "$AWG_KEY" "$listf" 2>/dev/null || [ ! -s "$listf" ]; then
+    error "Не удалось получить список туннелей."
     return 1
   fi
 
   echo
-  printf '%s\n' "${BOLD}Туннели с junk-параметрами:${NC}"
+  printf '%s\n' "${BOLD}Туннели awg-manager:${NC}"
   n=0
-  while IFS='|' read -r tid tname tstat tifc tjc tjmin tjmax ti1 || [ -n "$tid" ]; do
+  while IFS='|' read -r tid tname tstat _tend _taddr tifc _tndms || [ -n "$tid" ]; do
     [ -n "$tid" ] || continue
     n=$((n + 1))
-    printf '  %s%d)%s  %s  %s[%s]%s  %s%s  jc=%s jmin=%s jmax=%s%s\n' \
-      "$BOLD" "$n" "$NC" "$tid" "$DIM" "$tstat" "$NC" \
-      "$tname" "${tifc:+ · $tifc}" "$tjc" "${tjmin:-?}" "${tjmax:-?}" \
-      "${ti1:+ · i1}"
+    printf '  %s%d)%s  %s  %s[%s]%s  %s%s\n' \
+      "$BOLD" "$n" "$NC" "$tid" "$DIM" "${tstat:-?}" "$NC" \
+      "${tname:-?}" "${tifc:+ · $tifc}"
   done < "$listf"
   echo "  0) Отмена"
   echo
@@ -942,18 +910,57 @@ do_junk_from_tunnel() {
     return 1
   fi
   line=$(sed -n "${sel}p" "$listf")
-  JC=$(printf '%s' "$line" | cut -d'|' -f5)
-  JMIN=$(printf '%s' "$line" | cut -d'|' -f6)
-  JMAX=$(printf '%s' "$line" | cut -d'|' -f7)
-  I1=$(printf '%s' "$line" | cut -d'|' -f8-)
+  tid=$(printf '%s' "$line" | cut -d'|' -f1)
   tname=$(printf '%s' "$line" | cut -d'|' -f2)
-  if [ -z "$JC" ]; then
-    error "Пустой jc."
+  [ -n "$tid" ] || { error "Пустой id."; return 1; }
+
+  # 2) детали: локальный json → API detail/export
+  body=""
+  localf="/opt/etc/awg-manager/tunnels/${tid}.json"
+  if [ -f "$localf" ]; then
+    body=$(cat "$localf" 2>/dev/null) || body=""
+    [ -n "$body" ] && info "Источник: $localf"
+  fi
+  if [ -z "$body" ]; then
+    for path in \
+      "tunnels/${tid}" \
+      "tunnels/get?id=${tid}" \
+      "tunnels?id=${tid}" \
+      "export/conf?id=${tid}" \
+      "tunnels/export?id=${tid}"
+    do
+      body=$(curl -sS --connect-timeout 3 --max-time 8 \
+        -H "Authorization: Bearer ${AWG_KEY}" \
+        "${base}/${path}" 2>/dev/null) || body=""
+      case "$body" in
+        *'"jc"'*|*"Jc = "*|*"jc":*)
+          info "Источник: ${base}/${path}"
+          break
+          ;;
+        *) body="" ;;
+      esac
+    done
+  fi
+  if [ -z "$body" ]; then
+    error "Не удалось прочитать конфиг туннеля $tid (нет jc в list; json/API пусты)."
     return 1
   fi
+
+  # 3) разобрать Jc/Jmin/Jmax/I1 (JSON или wireguard conf)
+  JC=$(printf '%s' "$body" | sed -n 's/.*"jc"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p;s/.*[Jj]c[[:space:]]*=[[:space:]]*\([0-9][0-9]*\).*/\1/p' | head -1)
+  JMIN=$(printf '%s' "$body" | sed -n 's/.*"jmin"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p;s/.*[Jj]min[[:space:]]*=[[:space:]]*\([0-9][0-9]*\).*/\1/p' | head -1)
+  JMAX=$(printf '%s' "$body" | sed -n 's/.*"jmax"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p;s/.*[Jj]max[[:space:]]*=[[:space:]]*\([0-9][0-9]*\).*/\1/p' | head -1)
+  I1=$(printf '%s' "$body" | sed -n 's/.*"i1"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p;s/.*[Ii]1[[:space:]]*=[[:space:]]*\(.*\)/\1/p' | head -1)
+  I1=$(printf '%s' "$I1" | sed 's/\r$//;s/[[:space:]]*$//')
+
+  if [ -z "$JC" ]; then
+    error "В конфиге $tid нет Jc."
+    return 1
+  fi
+
   save_junk_params "$JC" "$JMIN" "$JMAX" "$I1"
-  info "Из туннеля «${tname}»: jc=$JC jmin=$JMIN jmax=$JMAX"
-  [ -n "$I1" ] && info "i1: ${#I1} символов" || warn "i1 пуст в API"
+  info "Из «${tname}» ($tid): jc=$JC jmin=${JMIN:-?} jmax=${JMAX:-?}"
+  [ -n "$I1" ] && info "i1: ${#I1} символов" || warn "i1 пуст"
   echo
   if confirm_Y "Применить к conf / туннелю сейчас?"; then
     do_apply_junk || true
