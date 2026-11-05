@@ -1529,7 +1529,19 @@ download_and_install_binary() {
     URL="https://github.com/$GITHUB_REPO/releases/download/${_tag}/${PANEL_ARCHIVE}"
     echo "  $URL"
     ARCHIVE_PATH="$TMPDIR/telemt-panel.tar.gz"
-    _http_download "$URL" "$ARCHIVE_PATH" || return 1
+    if ! _http_download "$URL" "$ARCHIVE_PATH"; then
+        # lite мог отсутствовать в выбранном теге — fallback на full
+        if [ "${PANEL_VARIANT:-full}" = "lite" ]; then
+            PANEL_VARIANT="full"
+            PANEL_ARCHIVE="telemt-panel-${PANEL_ARCH_TAG}-linux-gnu.tar.gz"
+            URL="https://github.com/$GITHUB_REPO/releases/download/${_tag}/${PANEL_ARCHIVE}"
+            echo "WARNING: lite-архив не найден (404). Пробуем full:"
+            echo "  $URL"
+            _http_download "$URL" "$ARCHIVE_PATH" || return 1
+        else
+            return 1
+        fi
+    fi
     echo "Extracting..."
     tar -xzf "$ARCHIVE_PATH" -C "$TMPDIR"
     BINARY=$(find "$TMPDIR" -type f \( -name 'telemt-panel' -o -name 'telemt-panel-*' \) ! -name '*.tar.gz' 2>/dev/null | head -n1)
@@ -1657,9 +1669,25 @@ list_panel_releases() {
     return 1
 }
 
+# lite есть только в релизах 1.0.0+ (rc); в 0.6.x — только full
+_panel_supports_lite() {
+    _v=$(printf '%s' "${1:-}" | sed 's/^[vV]//')
+    case "$_v" in
+        1.*|2.*|3.*|4.*|5.*|6.*|7.*|8.*|9.*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 # Выбор варианта full/lite (только GitHub aarch64/x86_64)
 pick_panel_variant() {
     PANEL_VARIANT="full"
+    if ! _panel_supports_lite "${LATEST_VER:-}"; then
+        PANEL_ARCHIVE="telemt-panel-${PANEL_ARCH_TAG}-linux-gnu.tar.gz"
+        echo ""
+        echo "Сборка lite недоступна для ${LATEST_VER:-этой версии} (только 1.0.0+)."
+        echo "Используем full → $PANEL_ARCHIVE"
+        return 0
+    fi
     echo ""
     printf '%s\n' "${BOLD}Сборка telemt-panel:${NC}"
     echo "  1. full — SQLite или memory, бинарник ~25–32 МБ"
