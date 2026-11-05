@@ -1,7 +1,8 @@
 #!/bin/sh
 # installer_warpscout.sh — меню warpscout для Entware (Keenetic / Netcraze)
-# Репозиторий: https://github.com/vernette/warpscout
-# Обёртка: https://github.com/rndnaame/nfqws-menu
+# Бинарники: https://github.com/rndnaame/warpscout (mipsel + arm)
+# Upstream:   https://github.com/vernette/warpscout (arm fallback)
+# Обёртка:    https://github.com/rndnaame/nfqws-menu
 #
 # Версионирование (MAJOR.MINOR.PATCH): при любых правках бампать SCRIPT_VERSION.
 #   PATCH — мелкие фиксы; MINOR — новое поведение; MAJOR — ломающие изменения.
@@ -18,7 +19,7 @@
 #   sh installer_warpscout.sh
 #   curl -fsSL https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/installer_warpscout.sh | sh
 
-SCRIPT_VERSION="0.1.33"
+SCRIPT_VERSION="0.1.34"
 
 # ANSI (portable для ash/BusyBox)
 RED=$(printf '\033[0;31m')
@@ -39,11 +40,15 @@ ACCOUNT_FILE="/opt/root/warpscout-account.json"
 SCAN_OUT="/opt/root/warpscout-awg.list"
 CONF_OUT="/opt/root/warpscout-awg.conf"
 JUNK_FILE="/opt/root/warpscout-junk.env"
-GITHUB_REPO="vernette/warpscout"
-# фиксированная версия с готовым mipsel-бинарником в этом репозитории
-PIN_VERSION="0.16.1"
-ARM64_URL="https://github.com/vernette/warpscout/releases/download/v${PIN_VERSION}/warpscout_${PIN_VERSION}_linux_arm64.tar.gz"
-MIPSEL_URL="https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/warpscout/warpscout-${PIN_VERSION}-mipsle"
+# rndnaame — сборки mipsel + arm; vernette — официальный upstream (arm)
+GITHUB_REPO="rndnaame/warpscout"
+OFFICIAL_REPO="vernette/warpscout"
+PIN_VERSION="0.16.1.001"
+PIN_VERSION_OFFICIAL="0.16.1"
+# tar.gz с бинарником warpscout внутри
+ARM64_URL="https://github.com/${GITHUB_REPO}/releases/download/v${PIN_VERSION}/warpscout_${PIN_VERSION}_linux_arm64.tar.gz"
+ARM64_URL_FALLBACK="https://github.com/${OFFICIAL_REPO}/releases/download/v${PIN_VERSION_OFFICIAL}/warpscout_${PIN_VERSION_OFFICIAL}_linux_arm64.tar.gz"
+MIPSEL_URL="https://github.com/${GITHUB_REPO}/releases/download/v${PIN_VERSION}/warpscout_${PIN_VERSION}_linux_mipsle.tar.gz"
 AWG_SETTINGS="/opt/etc/awg-manager/settings.json"
 AWG_API_KEY_FILE="/opt/etc/awg-manager/.api_key"
 TMPDIR="/tmp/warpscout-installer-$$"
@@ -349,49 +354,63 @@ do_install() {
 
   mkdir -p /opt/bin /opt/root "$TMPDIR" 2>/dev/null || true
 
+  # скачать tar.gz → найти bin warpscout
+  _install_from_tarball() {
+    url="$1"
+    label="$2"
+    archive="$TMPDIR/warpscout.tar.gz"
+    rm -f "$archive" 2>/dev/null || true
+    # чистим прошлые распаковки bin
+    rm -f "$TMPDIR/warpscout" 2>/dev/null || true
+    info "${label}: $url"
+    if ! http_get "$url" "$archive"; then
+      return 1
+    fi
+    sz=$(wc -c < "$archive" 2>/dev/null | tr -d ' ')
+    case "$sz" in ''|*[!0-9]*) sz=0 ;; esac
+    if [ "$sz" -lt 100000 ]; then
+      warn "Архив слишком маленький (${sz} байт)."
+      return 1
+    fi
+    info "Распаковка..."
+    if ! tar -xzf "$archive" -C "$TMPDIR" 2>/dev/null; then
+      warn "Не удалось распаковать архив."
+      return 1
+    fi
+    src=""
+    if [ -f "$TMPDIR/warpscout" ]; then
+      src="$TMPDIR/warpscout"
+    else
+      src=$(find "$TMPDIR" -type f -name 'warpscout' 2>/dev/null | head -1)
+    fi
+    if [ -z "$src" ] || [ ! -f "$src" ]; then
+      warn "В архиве не найден бинарник warpscout."
+      return 1
+    fi
+    INSTALL_SRC="$src"
+    return 0
+  }
+
+  INSTALL_SRC=""
   case "$ARCH" in
     aarch64)
-      archive="$TMPDIR/warpscout.tar.gz"
-      info "Архитектура: aarch64 → ${ARM64_URL}"
-      if ! http_get "$ARM64_URL" "$archive"; then
-        error "Не удалось скачать архив."
-        return 1
+      info "Архитектура: aarch64"
+      if ! _install_from_tarball "$ARM64_URL" "rndnaame/warpscout"; then
+        warn "Основной источник недоступен — пробуем vernette (upstream)..."
+        if ! _install_from_tarball "$ARM64_URL_FALLBACK" "vernette/warpscout"; then
+          error "Не удалось скачать arm64-сборку."
+          return 1
+        fi
       fi
-      sz=$(wc -c < "$archive" 2>/dev/null | tr -d ' ')
-      case "$sz" in ''|*[!0-9]*) sz=0 ;; esac
-      if [ "$sz" -lt 100000 ]; then
-        error "Архив слишком маленький (${sz} байт) — обрыв или HTML-ошибка."
-        return 1
-      fi
-      info "Распаковка..."
-      if ! tar -xzf "$archive" -C "$TMPDIR" 2>/dev/null; then
-        error "Не удалось распаковать архив."
-        return 1
-      fi
-      src=""
-      if [ -f "$TMPDIR/warpscout" ]; then
-        src="$TMPDIR/warpscout"
-      else
-        src=$(find "$TMPDIR" -type f -name 'warpscout' 2>/dev/null | head -1)
-      fi
-      if [ -z "$src" ] || [ ! -f "$src" ]; then
-        error "В архиве не найден бинарник warpscout."
-        return 1
-      fi
+      src="$INSTALL_SRC"
       ;;
     mipsel)
-      src="$TMPDIR/warpscout"
-      info "Архитектура: mipsel → ${MIPSEL_URL}"
-      if ! http_get "$MIPSEL_URL" "$src"; then
-        error "Не удалось скачать mipsel-бинарник."
+      info "Архитектура: mipsel"
+      if ! _install_from_tarball "$MIPSEL_URL" "rndnaame/warpscout"; then
+        error "Не удалось скачать mipsel-сборку (только rndnaame/warpscout)."
         return 1
       fi
-      sz=$(wc -c < "$src" 2>/dev/null | tr -d ' ')
-      case "$sz" in ''|*[!0-9]*) sz=0 ;; esac
-      if [ "$sz" -lt 100000 ]; then
-        error "Файл слишком маленький (${sz} байт) — обрыв или HTML-ошибка."
-        return 1
-      fi
+      src="$INSTALL_SRC"
       ;;
     *)
       error "Неподдерживаемая ARCH=$ARCH"
@@ -411,7 +430,8 @@ do_install() {
 
   ver=$(installed_version 2>/dev/null) || ver=""
   info "Установлено: $BIN ${ver:+(v$ver)}"
-  printf '%s\n' "${DIM}Репозиторий: https://github.com/${GITHUB_REPO}${NC}"
+  printf '%s\n' "${DIM}Источник: https://github.com/${GITHUB_REPO}${NC}"
+  printf '%s\n' "${DIM}Upstream: https://github.com/${OFFICIAL_REPO}${NC}"
   return 0
 }
 
@@ -2027,8 +2047,9 @@ main_menu() {
     printf '%s\n' "${CYAN}================================================${NC}"
     echo
     printf '%s\n' "${DIM}  Поиск рабочих эндпоинтов Cloudflare WARP${NC}"
-    printf '%s\n' "${DIM}  https://github.com/${GITHUB_REPO}${NC}"
-    printf '%s\n' "${DIM}  pin: v${PIN_VERSION}  ·  bin → ${BIN}${NC}"
+    printf '%s\n' "${DIM}  https://github.com/${GITHUB_REPO}  (mipsel+arm)${NC}"
+    printf '%s\n' "${DIM}  upstream: github.com/${OFFICIAL_REPO}  ·  pin v${PIN_VERSION}${NC}"
+    printf '%s\n' "${DIM}  bin → ${BIN}${NC}"
     echo
     show_status
     echo
