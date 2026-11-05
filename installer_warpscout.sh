@@ -19,7 +19,7 @@
 #   sh installer_warpscout.sh
 #   curl -fsSL https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/installer_warpscout.sh | sh
 
-SCRIPT_VERSION="0.1.34"
+SCRIPT_VERSION="0.1.36"
 
 # ANSI (portable для ash/BusyBox)
 RED=$(printf '\033[0;31m')
@@ -43,12 +43,12 @@ JUNK_FILE="/opt/root/warpscout-junk.env"
 # rndnaame — сборки mipsel + arm; vernette — официальный upstream (arm)
 GITHUB_REPO="rndnaame/warpscout"
 OFFICIAL_REPO="vernette/warpscout"
-PIN_VERSION="0.16.1.001"
-PIN_VERSION_OFFICIAL="0.16.1"
-# tar.gz с бинарником warpscout внутри
-ARM64_URL="https://github.com/${GITHUB_REPO}/releases/download/v${PIN_VERSION}/warpscout_${PIN_VERSION}_linux_arm64.tar.gz"
-ARM64_URL_FALLBACK="https://github.com/${OFFICIAL_REPO}/releases/download/v${PIN_VERSION_OFFICIAL}/warpscout_${PIN_VERSION_OFFICIAL}_linux_arm64.tar.gz"
-MIPSEL_URL="https://github.com/${GITHUB_REPO}/releases/download/v${PIN_VERSION}/warpscout_${PIN_VERSION}_linux_mipsle.tar.gz"
+# fallback, если GitHub API недоступен (без «.001» — такого релиза нет)
+PIN_VERSION="0.16.1"
+MIPSEL_BIN_FALLBACK="https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/warpscout/warpscout-0.16.1-mipsle"
+# заполняется resolve_release_version
+WS_VERSION=""
+WS_VERSION_SOURCE=""
 AWG_SETTINGS="/opt/etc/awg-manager/settings.json"
 AWG_API_KEY_FILE="/opt/etc/awg-manager/.api_key"
 TMPDIR="/tmp/warpscout-installer-$$"
@@ -195,6 +195,8 @@ github_alt_urls() {
       printf '%s\n' "$url"
       printf '%s\n' "https://ghproxy.net/${url}"
       printf '%s\n' "https://mirror.ghproxy.com/${url}"
+      printf '%s\n' "https://ghfast.top/${url}"
+      printf '%s\n' "https://gh-proxy.com/${url}"
       printf '%s\n' "https://gh.ddlc.top/${url}"
       printf '%s\n' "https://gitproxy.click/${url}"
       ;;
@@ -220,9 +222,9 @@ _http_get_one() {
   u="$1"
   d="$2"
   if command -v curl >/dev/null 2>&1; then
-    curl -fsSL --connect-timeout 10 --max-time 180 "$u" -o "$d" 2>/dev/null
+    curl -fsSL --connect-timeout 5 --max-time 40 "$u" -o "$d" 2>/dev/null
   elif command -v wget >/dev/null 2>&1; then
-    wget -q -O "$d" -T 180 "$u" 2>/dev/null
+    wget -q -O "$d" -T 40 "$u" 2>/dev/null
   else
     return 1
   fi
@@ -245,6 +247,52 @@ http_get() {
     fi
   done
   return 1
+}
+
+# Версия релиза без «v»: API latest → pin
+# RELEASE_VER выставляется глобально
+_fetch_tag_name() {
+  # _fetch_tag_name OWNER/REPO → tag (vX.Y.Z или X.Y.Z)
+  repo="$1"
+  api="https://api.github.com/repos/${repo}/releases/latest"
+  body=""
+  if command -v curl >/dev/null 2>&1; then
+    body=$(curl -fsS --connect-timeout 3 --max-time 8       -H "Accept: application/vnd.github+json" "$api" 2>/dev/null) || body=""
+    if [ -z "$body" ]; then
+      body=$(curl -fsS --connect-timeout 3 --max-time 8         -H "Accept: application/vnd.github+json"         "https://ghproxy.net/${api}" 2>/dev/null) || body=""
+    fi
+  fi
+  [ -n "$body" ] || return 1
+  printf '%s' "$body" | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1
+}
+
+resolve_release_version() {
+  WS_VERSION=""
+  WS_VERSION_SOURCE=""
+  tag=$(_fetch_tag_name "$GITHUB_REPO" 2>/dev/null) || tag=""
+  if [ -n "$tag" ]; then
+    WS_VERSION=$(printf '%s' "$tag" | sed 's/^[vV]//')
+    WS_VERSION_SOURCE="api:${GITHUB_REPO}"
+  fi
+  if [ -z "$WS_VERSION" ]; then
+    WS_VERSION="$PIN_VERSION"
+    WS_VERSION_SOURCE="pin"
+  fi
+  # отсечь мусор
+  case "$WS_VERSION" in
+    *[!0-9.]*|'')
+      WS_VERSION="$PIN_VERSION"
+      WS_VERSION_SOURCE="pin"
+      ;;
+  esac
+}
+
+# URL ассета tar.gz: repo, version, arch_suffix (linux_arm64|linux_mipsle)
+release_asset_url() {
+  repo="$1"
+  ver="$2"
+  suffix="$3"
+  printf 'https://github.com/%s/releases/download/v%s/warpscout_%s_%s.tar.gz'     "$repo" "$ver" "$ver" "$suffix"
 }
 
 # ---------------------------------------------------------------------------
@@ -354,15 +402,15 @@ do_install() {
 
   mkdir -p /opt/bin /opt/root "$TMPDIR" 2>/dev/null || true
 
-  # скачать tar.gz → найти bin warpscout
+  resolve_release_version
+  info "Версия для установки: v${WS_VERSION} (${WS_VERSION_SOURCE})"
+
   _install_from_tarball() {
     url="$1"
     label="$2"
     archive="$TMPDIR/warpscout.tar.gz"
-    rm -f "$archive" 2>/dev/null || true
-    # чистим прошлые распаковки bin
-    rm -f "$TMPDIR/warpscout" 2>/dev/null || true
-    info "${label}: $url"
+    rm -f "$archive" "$TMPDIR/warpscout" 2>/dev/null || true
+    info "${label}"
     if ! http_get "$url" "$archive"; then
       return 1
     fi
@@ -373,6 +421,8 @@ do_install() {
       return 1
     fi
     info "Распаковка..."
+    # убрать старый bin из tmp, чтобы find не нашёл прошлый
+    rm -f "$TMPDIR/warpscout" 2>/dev/null || true
     if ! tar -xzf "$archive" -C "$TMPDIR" 2>/dev/null; then
       warn "Не удалось распаковать архив."
       return 1
@@ -392,25 +442,59 @@ do_install() {
   }
 
   INSTALL_SRC=""
+  src=""
   case "$ARCH" in
     aarch64)
       info "Архитектура: aarch64"
-      if ! _install_from_tarball "$ARM64_URL" "rndnaame/warpscout"; then
-        warn "Основной источник недоступен — пробуем vernette (upstream)..."
-        if ! _install_from_tarball "$ARM64_URL_FALLBACK" "vernette/warpscout"; then
-          error "Не удалось скачать arm64-сборку."
-          return 1
+      url=$(release_asset_url "$GITHUB_REPO" "$WS_VERSION" "linux_arm64")
+      if ! _install_from_tarball "$url" "${GITHUB_REPO} v${WS_VERSION} linux_arm64"; then
+        # upstream: та же версия, иначе pin
+        uver="$WS_VERSION"
+        url=$(release_asset_url "$OFFICIAL_REPO" "$uver" "linux_arm64")
+        warn "Пробуем upstream ${OFFICIAL_REPO} v${uver}..."
+        if ! _install_from_tarball "$url" "${OFFICIAL_REPO} v${uver} linux_arm64"; then
+          if [ "$uver" != "$PIN_VERSION" ]; then
+            url=$(release_asset_url "$OFFICIAL_REPO" "$PIN_VERSION" "linux_arm64")
+            warn "Пробуем upstream pin v${PIN_VERSION}..."
+            _install_from_tarball "$url" "${OFFICIAL_REPO} v${PIN_VERSION} linux_arm64" || true
+          fi
         fi
       fi
       src="$INSTALL_SRC"
+      if [ -z "$src" ] || [ ! -f "$src" ]; then
+        error "Не удалось скачать arm64-сборку."
+        return 1
+      fi
       ;;
     mipsel)
       info "Архитектура: mipsel"
-      if ! _install_from_tarball "$MIPSEL_URL" "rndnaame/warpscout"; then
-        error "Не удалось скачать mipsel-сборку (только rndnaame/warpscout)."
-        return 1
+      url=$(release_asset_url "$GITHUB_REPO" "$WS_VERSION" "linux_mipsle")
+      if _install_from_tarball "$url" "${GITHUB_REPO} v${WS_VERSION} linux_mipsle"; then
+        src="$INSTALL_SRC"
+      else
+        # pin той же схемы, если API отдал странный tag
+        if [ "$WS_VERSION" != "$PIN_VERSION" ]; then
+          url=$(release_asset_url "$GITHUB_REPO" "$PIN_VERSION" "linux_mipsle")
+          warn "Пробуем pin v${PIN_VERSION} mipsle..."
+          if _install_from_tarball "$url" "${GITHUB_REPO} v${PIN_VERSION} linux_mipsle"; then
+            src="$INSTALL_SRC"
+          fi
+        fi
       fi
-      src="$INSTALL_SRC"
+      if [ -z "$src" ] || [ ! -f "$src" ]; then
+        warn "Релиз tar.gz недоступен — raw mipsel-bin (nfqws-menu)..."
+        src="$TMPDIR/warpscout"
+        if ! http_get "$MIPSEL_BIN_FALLBACK" "$src"; then
+          error "Не удалось скачать mipsel (release + raw fallback)."
+          return 1
+        fi
+        sz=$(wc -c < "$src" 2>/dev/null | tr -d ' ')
+        case "$sz" in ''|*[!0-9]*) sz=0 ;; esac
+        if [ "$sz" -lt 100000 ]; then
+          error "Файл слишком маленький (${sz} байт)."
+          return 1
+        fi
+      fi
       ;;
     *)
       error "Неподдерживаемая ARCH=$ARCH"
@@ -430,6 +514,7 @@ do_install() {
 
   ver=$(installed_version 2>/dev/null) || ver=""
   info "Установлено: $BIN ${ver:+(v$ver)}"
+  printf '%s\n' "${DIM}Релиз: v${WS_VERSION} (${WS_VERSION_SOURCE})${NC}"
   printf '%s\n' "${DIM}Источник: https://github.com/${GITHUB_REPO}${NC}"
   printf '%s\n' "${DIM}Upstream: https://github.com/${OFFICIAL_REPO}${NC}"
   return 0
@@ -2048,7 +2133,7 @@ main_menu() {
     echo
     printf '%s\n' "${DIM}  Поиск рабочих эндпоинтов Cloudflare WARP${NC}"
     printf '%s\n' "${DIM}  https://github.com/${GITHUB_REPO}  (mipsel+arm)${NC}"
-    printf '%s\n' "${DIM}  upstream: github.com/${OFFICIAL_REPO}  ·  pin v${PIN_VERSION}${NC}"
+    printf '%s\n' "${DIM}  upstream: github.com/${OFFICIAL_REPO}  ·  fallback pin v${PIN_VERSION}${NC}"
     printf '%s\n' "${DIM}  bin → ${BIN}${NC}"
     echo
     show_status
