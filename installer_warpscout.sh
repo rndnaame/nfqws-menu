@@ -19,7 +19,7 @@
 #   sh installer_warpscout.sh
 #   curl -fsSL https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/installer_warpscout.sh | sh
 
-SCRIPT_VERSION="0.1.41"
+SCRIPT_VERSION="0.1.42"
 
 # ANSI (portable для ash/BusyBox)
 RED=$(printf '\033[0;31m')
@@ -2114,14 +2114,15 @@ do_check_tunnel() {
       addr=""
     fi
     [ -n "$glob" ] || glob="false"
-    printf '%s|%s|%s|%s|%s\n' "$ifc" "$name" "$st" "$addr" "$glob" >> "$iflistf"
+    # ifc|name|status|addr|global|endpoint
+    printf '%s|%s|%s|%s|%s|%s\n' "$ifc" "$name" "$st" "$addr" "$glob" "" >> "$iflistf"
   done
 
   if [ ! -s "$iflistf" ] && [ -s "$mapf" ]; then
     while IFS='|' read -r ifc name addr st glob || [ -n "$ifc" ]; do
       case "$ifc" in nwg*|t2s*|opkgtun*|awg*) ;; *) continue ;; esac
       _iflist_has "$iflistf" "$ifc" && continue
-      printf '%s|%s|%s|%s|%s\n' "$ifc" "${name:-$ifc}" "${st:-up}" "$addr" "${glob:-false}" >> "$iflistf"
+      printf '%s|%s|%s|%s|%s|%s\n' "$ifc" "${name:-$ifc}" "${st:-up}" "$addr" "${glob:-false}" "" >> "$iflistf"
     done < "$mapf"
   fi
 
@@ -2130,10 +2131,11 @@ do_check_tunnel() {
     base=$(awg_api_base)
     listf="$TMPDIR/awg-tunnels-check.txt"
     if awg_list_tunnels "$base" "$AWG_KEY" "$listf" 2>/dev/null; then
-      while IFS='|' read -r _tid tname tstat _tend taddr tifc _tndms || [ -n "$_tid" ]; do
+      while IFS='|' read -r _tid tname tstat tend taddr tifc _tndms || [ -n "$_tid" ]; do
         tifc=$(_strip_q "$tifc")
         tname=$(_strip_q "$tname")
         tstat=$(_strip_q "$tstat")
+        tend=$(_strip_q "$tend")
         [ -n "$tifc" ] || continue
         case "$tifc" in *'|'*) tifc=$(_strip_q "$(printf '%s' "$tifc" | cut -d'|' -f1)") ;; esac
         ta=$(printf '%s' "$taddr" | cut -d/ -f1)
@@ -2141,17 +2143,17 @@ do_check_tunnel() {
         if _iflist_has "$iflistf" "$tifc"; then
           tmpm="$iflistf.map"
           : > "$tmpm"
-          while IFS='|' read -r _i _n _s _a _g || [ -n "$_i" ]; do
+          while IFS='|' read -r _i _n _s _a _g _e || [ -n "$_i" ]; do
             _i=$(_strip_q "$_i")
             if [ "$_i" = "$tifc" ]; then
-              printf '%s|%s|%s|%s|%s\n' "$tifc" "${tname:-$_n}" "${tstat:-$_s}" "${ta:-$_a}" "true" >> "$tmpm"
+              printf '%s|%s|%s|%s|%s|%s\n' "$tifc" "${tname:-$_n}" "${tstat:-$_s}" "${ta:-$_a}" "true" "${tend:-$_e}" >> "$tmpm"
             else
-              printf '%s|%s|%s|%s|%s\n' "$_i" "$_n" "$_s" "$_a" "$_g" >> "$tmpm"
+              printf '%s|%s|%s|%s|%s|%s\n' "$_i" "$_n" "$_s" "$_a" "$_g" "$_e" >> "$tmpm"
             fi
           done < "$iflistf"
           mv -f "$tmpm" "$iflistf" 2>/dev/null || cp -f "$tmpm" "$iflistf"
         else
-          printf '%s|%s|%s|%s|true\n' "$tifc" "${tname:-$tifc}" "${tstat:-up}" "$ta" >> "$iflistf"
+          printf '%s|%s|%s|%s|true|%s\n' "$tifc" "${tname:-$tifc}" "${tstat:-up}" "$ta" "$tend" >> "$iflistf"
         fi
       done < "$listf"
     fi
@@ -2161,11 +2163,11 @@ do_check_tunnel() {
   if [ -s "$iflistf" ]; then
     tmpd="$iflistf.dedup"
     : > "$tmpd"
-    while IFS='|' read -r _i _n _s _a _g || [ -n "$_i" ]; do
+    while IFS='|' read -r _i _n _s _a _g _e || [ -n "$_i" ]; do
       _i=$(_strip_q "$_i")
       [ -n "$_i" ] || continue
       _iflist_has "$tmpd" "$_i" && continue
-      printf '%s|%s|%s|%s|%s\n' "$_i" "$(_strip_q "$_n")" "$(_strip_q "$_s")" "$(_strip_q "$_a")" "$(_strip_q "${_g:-false}")" >> "$tmpd"
+      printf '%s|%s|%s|%s|%s|%s\n' "$_i" "$(_strip_q "$_n")" "$(_strip_q "$_s")" "$(_strip_q "$_a")" "$(_strip_q "${_g:-false}")" "$(_strip_q "${_e}")" >> "$tmpd"
     done < "$iflistf"
     mv -f "$tmpd" "$iflistf" 2>/dev/null || cp -f "$tmpd" "$iflistf"
   fi
@@ -2189,16 +2191,17 @@ do_check_tunnel() {
       tstat=$(sed -n '1p' "$iflistf" | cut -d'|' -f3)
       taddr=$(sed -n '1p' "$iflistf" | cut -d'|' -f4)
       tglob=$(sed -n '1p' "$iflistf" | cut -d'|' -f5)
+      tend=$(sed -n '1p' "$iflistf" | cut -d'|' -f6)
       if [ "$tglob" = "true" ]; then
-        info "Интерфейс: $iface · ${GREEN}${tlabel}${NC} [${tstat}]${taddr:+ · $taddr}"
+        info "Интерфейс: $iface · ${GREEN}${tlabel}${NC}${taddr:+ · $taddr}${tend:+ · $tend}  ${DIM}[${tstat}]${NC}"
       else
-        info "Интерфейс: $iface · ${DIM}${tlabel}${NC} [${tstat}]${taddr:+ · $taddr}"
+        info "Интерфейс: $iface · ${DIM}${tlabel}${NC}${taddr:+ · $taddr}${tend:+ · $tend}  ${DIM}[${tstat}]${NC}"
       fi
     else
       echo
       printf '%s\n' "${BOLD}Туннели / интерфейсы:${NC}"
       n=0
-      while IFS='|' read -r ifc tlab tstat taddr tglob || [ -n "$ifc" ]; do
+      while IFS='|' read -r ifc tlab tstat taddr tglob tend || [ -n "$ifc" ]; do
         [ -n "$ifc" ] || continue
         n=$((n + 1))
         extra="$tlab"
@@ -2208,13 +2211,14 @@ do_check_tunnel() {
         else
           ncol="$DIM"
         fi
-        printf '  %s%d)%s  %s  %s[%s]%s' \
-          "$BOLD" "$n" "$NC" "$ifc" "$DIM" "${tstat:-?}" "$NC"
+        # ifc · name · addr · endpoint  [status]
+        printf '  %s%d)%s  %-8s' "$BOLD" "$n" "$NC" "$ifc"
         if [ -n "$extra" ]; then
           printf ' · %s%s%s' "$ncol" "$extra" "$NC"
         fi
         [ -n "$taddr" ] && printf ' · %s' "$taddr"
-        printf '\n'
+        [ -n "$tend" ] && printf ' · %s%s%s' "$CYAN" "$tend" "$NC"
+        printf '  %s[%s]%s\n' "$DIM" "${tstat:-?}" "$NC"
       done < "$iflistf"
       echo "  0) Выход"
       echo
