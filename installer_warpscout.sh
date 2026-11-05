@@ -19,7 +19,7 @@
 #   sh installer_warpscout.sh
 #   curl -fsSL https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/installer_warpscout.sh | sh
 
-SCRIPT_VERSION="0.1.37"
+SCRIPT_VERSION="0.1.38"
 
 # ANSI (portable для ash/BusyBox)
 RED=$(printf '\033[0;31m')
@@ -502,9 +502,6 @@ do_install() {
     return 1
   fi
 
-  if [ -x "$BIN" ]; then
-    cp -f "$BIN" "${BIN}.bak" 2>/dev/null || true
-  fi
   if ! cp -f "$src" "$BIN"; then
     error "Не удалось скопировать в $BIN"
     return 1
