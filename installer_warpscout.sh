@@ -19,7 +19,7 @@
 #   sh installer_warpscout.sh
 #   curl -fsSL https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/installer_warpscout.sh | sh
 
-SCRIPT_VERSION="0.1.56"
+SCRIPT_VERSION="0.1.57"
 
 # ANSI (portable для ash/BusyBox)
 RED=$(printf '\033[0;31m')
@@ -2473,50 +2473,46 @@ do_remove() {
 # ---------------------------------------------------------------------------
 # Показать сохранённый conf (+ опционально QR, если есть qrencode)
 # ---------------------------------------------------------------------------
-# Дополнить conf полями, которые часто ждут AmneziaVPN (S1–S4, H1–H4, MTU, DNS)
-# stdout → нормализованный conf
-conf_for_amnezia() {
+
+
+# Компактный conf для QR (меньше байт → меньше модулей → влезает в узкий терминал)
+conf_for_qr() {
   conf="$1"
   [ -f "$conf" ] || return 1
-  awk '
-    BEGIN {
-      inif=0; seen_s1=0; seen_s2=0; seen_s3=0; seen_s4=0
-      seen_h1=0; seen_h2=0; seen_h3=0; seen_h4=0
-      seen_mtu=0; seen_dns=0
-    }
-    function flush_missing() {
-      if (!seen_mtu) print "MTU = 1280"
-      if (!seen_dns) print "DNS = 1.1.1.1, 1.0.0.1"
-      if (!seen_s1) print "S1 = 0"
-      if (!seen_s2) print "S2 = 0"
-      if (!seen_s3) print "S3 = 0"
-      if (!seen_s4) print "S4 = 0"
-      if (!seen_h1) print "H1 = 1"
-      if (!seen_h2) print "H2 = 2"
-      if (!seen_h3) print "H3 = 3"
-      if (!seen_h4) print "H4 = 4"
-      seen_s1=seen_s2=seen_s3=seen_s4=1
-      seen_h1=seen_h2=seen_h3=seen_h4=1
-      seen_mtu=seen_dns=1
-    }
-    /^\[Interface\]/ { inif=1; print; next }
-    /^\[/ {
-      if (inif) { flush_missing(); inif=0 }
-      print; next
-    }
-    inif && /^[[:space:]]*[Mm][Tt][Uu][[:space:]]*=/ { seen_mtu=1 }
-    inif && /^[[:space:]]*[Dd][Nn][Ss][[:space:]]*=/ { seen_dns=1 }
-    inif && /^[[:space:]]*[Ss]1[[:space:]]*=/ { seen_s1=1 }
-    inif && /^[[:space:]]*[Ss]2[[:space:]]*=/ { seen_s2=1 }
-    inif && /^[[:space:]]*[Ss]3[[:space:]]*=/ { seen_s3=1 }
-    inif && /^[[:space:]]*[Ss]4[[:space:]]*=/ { seen_s4=1 }
-    inif && /^[[:space:]]*[Hh]1[[:space:]]*=/ { seen_h1=1 }
-    inif && /^[[:space:]]*[Hh]2[[:space:]]*=/ { seen_h2=1 }
-    inif && /^[[:space:]]*[Hh]3[[:space:]]*=/ { seen_h3=1 }
-    inif && /^[[:space:]]*[Hh]4[[:space:]]*=/ { seen_h4=1 }
-    { print }
-    END { if (inif) flush_missing() }
-  ' "$conf"
+  # вытащить поля и собрать без пробелов вокруг =; без S/H (дефолты клиента)
+  _pk=$(grep -iE '^[[:space:]]*PrivateKey[[:space:]]*=' "$conf" | head -1 | sed 's/^[^=]*=[[:space:]]*//;s/[[:space:]]*$//')
+  _addr=$(grep -iE '^[[:space:]]*Address[[:space:]]*=' "$conf" | head -1 | sed 's/^[^=]*=[[:space:]]*//;s/[[:space:]]*$//')
+  _dns=$(grep -iE '^[[:space:]]*DNS[[:space:]]*=' "$conf" | head -1 | sed 's/^[^=]*=[[:space:]]*//;s/[[:space:]]*$//')
+  _mtu=$(grep -iE '^[[:space:]]*MTU[[:space:]]*=' "$conf" | head -1 | sed 's/^[^=]*=[[:space:]]*//;s/[[:space:]]*$//')
+  _jc=$(grep -iE '^[[:space:]]*Jc[[:space:]]*=' "$conf" | head -1 | sed 's/^[^=]*=[[:space:]]*//;s/[[:space:]]*$//')
+  _jmin=$(grep -iE '^[[:space:]]*Jmin[[:space:]]*=' "$conf" | head -1 | sed 's/^[^=]*=[[:space:]]*//;s/[[:space:]]*$//')
+  _jmax=$(grep -iE '^[[:space:]]*Jmax[[:space:]]*=' "$conf" | head -1 | sed 's/^[^=]*=[[:space:]]*//;s/[[:space:]]*$//')
+  _i1=$(grep -iE '^[[:space:]]*I1[[:space:]]*=' "$conf" | head -1 | sed 's/^[^=]*=[[:space:]]*//;s/[[:space:]]*$//')
+  _pub=$(grep -iE '^[[:space:]]*PublicKey[[:space:]]*=' "$conf" | head -1 | sed 's/^[^=]*=[[:space:]]*//;s/[[:space:]]*$//')
+  _ep=$(grep -iE '^[[:space:]]*Endpoint[[:space:]]*=' "$conf" | head -1 | sed 's/^[^=]*=[[:space:]]*//;s/[[:space:]]*$//')
+  _aip=$(grep -iE '^[[:space:]]*AllowedIPs[[:space:]]*=' "$conf" | head -1 | sed 's/^[^=]*=[[:space:]]*//;s/[[:space:]]*$//')
+  _pka=$(grep -iE '^[[:space:]]*PersistentKeepalive[[:space:]]*=' "$conf" | head -1 | sed 's/^[^=]*=[[:space:]]*//;s/[[:space:]]*$//')
+  [ -n "$_pk" ] && [ -n "$_pub" ] && [ -n "$_ep" ] || return 1
+  [ -n "$_dns" ] || _dns="1.1.1.1"
+  [ -n "$_mtu" ] || _mtu="1280"
+  [ -n "$_aip" ] || _aip="0.0.0.0/0"
+  [ -n "$_pka" ] || _pka="25"
+  {
+    printf '%s\n' "[Interface]"
+    printf 'PrivateKey=%s\n' "$_pk"
+    [ -n "$_addr" ] && printf 'Address=%s\n' "$_addr"
+    printf 'DNS=%s\n' "$_dns"
+    printf 'MTU=%s\n' "$_mtu"
+    [ -n "$_jc" ] && printf 'Jc=%s\n' "$_jc"
+    [ -n "$_jmin" ] && printf 'Jmin=%s\n' "$_jmin"
+    [ -n "$_jmax" ] && printf 'Jmax=%s\n' "$_jmax"
+    [ -n "$_i1" ] && printf 'I1=%s\n' "$_i1"
+    printf '%s\n' "[Peer]"
+    printf 'PublicKey=%s\n' "$_pub"
+    printf 'Endpoint=%s\n' "$_ep"
+    printf 'AllowedIPs=%s\n' "$_aip"
+    printf 'PersistentKeepalive=%s\n' "$_pka"
+  }
 }
 
 ensure_qrencode() {
@@ -2546,63 +2542,29 @@ ensure_qrencode() {
   return 0
 }
 
-# Ширина терминала (для мобильного SSH)
-_term_cols() {
-  cols="${COLUMNS:-}"
-  if [ -z "$cols" ] && command -v tput >/dev/null 2>&1; then
-    cols=$(tput cols 2>/dev/null) || cols=""
-  fi
-  # stty как запасной вариант
-  if [ -z "$cols" ] && [ -c /dev/tty ]; then
-    cols=$(stty size < /dev/tty 2>/dev/null | awk '{print $2}') || cols=""
-  fi
-  case "$cols" in ''|*[!0-9]*) cols=80 ;; esac
-  printf '%s\n' "$cols"
-}
 
-# QR в терминал (узкий экран ломает QR переносом строк)
+# QR в терминал: всегда компактный (-m 0 -l L)
 print_qr_file() {
   f="$1"
   _qr=qrencode
   command -v qrencode >/dev/null 2>&1 || _qr=/opt/bin/qrencode
   [ -x "$_qr" ] || _qr=/opt/bin/qrencode
-  sz=$(wc -c < "$f" 2>/dev/null | tr -d ' ')
-  case "$sz" in ''|*[!0-9]*) sz=0 ;; esac
-  if [ "$sz" -gt 1200 ]; then
-    warn "Данные большие (${sz} байт) — QR может не читаться камерой."
-  fi
 
-  cols=$(_term_cols)
-  # на узком экране (телефон) — компактнее
-  margin=2
-  ecl="M"
-  if [ "$cols" -lt 60 ]; then
-    margin=0
-    ecl="L"
-    warn "Узкий терминал (${cols} кол.) — QR часто ломается переносом строк."
-    warn "Переверните телефон горизонтально (широкий экран)."
-  fi
-
-  printf '\n\n'
+  printf '\n'
   ok=0
-  if "$_qr" -t ANSIUTF8 -m "$margin" -l "$ecl" < "$f" 2>/dev/null; then
+  if "$_qr" -t ANSIUTF8 -m 0 -l L < "$f" 2>/dev/null; then
     ok=1
-  elif "$_qr" -t UTF8 -m "$margin" -l "$ecl" < "$f" 2>/dev/null; then
+  elif "$_qr" -t UTF8 -m 0 -l L < "$f" 2>/dev/null; then
     ok=1
-  elif "$_qr" -t ANSI -m "$margin" -l "$ecl" < "$f" 2>/dev/null; then
+  elif "$_qr" -t ANSI -m 0 -l L < "$f" 2>/dev/null; then
     ok=1
-  elif "$_qr" -t ASCII -m "$margin" -l "$ecl" < "$f" 2>/dev/null; then
+  elif "$_qr" -t ASCII -m 0 -l L < "$f" 2>/dev/null; then
     ok=1
   fi
-  printf '\n\n'
-
+  printf '\n'
   if [ "$ok" != "1" ]; then
     error "qrencode не смог построить QR."
     return 1
-  fi
-
-  if [ "$cols" -lt 60 ]; then
-    info "Если QR «полосками» — перенос строк; нужен горизонтальный экран."
   fi
   return 0
 }
@@ -2645,14 +2607,13 @@ do_show_conf() {
     return 1
   fi
 
-  # Один универсальный conf: WG-поля + S1–S4/H1–H4/MTU/DNS (Amnezia;
-  # WG Tunnel/обычный WG лишние ключи обычно игнорируют)
+  # Компактный conf → меньше модулей QR (удобнее на телефоне)
   qf="$TMPDIR/qr-conf.txt"
-  if ! conf_for_amnezia "$CONF_OUT" > "$qf" 2>/dev/null; then
-    warn "Нормализация не удалась — QR из исходного conf."
+  if ! conf_for_qr "$CONF_OUT" > "$qf" 2>/dev/null; then
+    warn "Сборка компактного conf не удалась — QR из файла как есть."
     cp -f "$CONF_OUT" "$qf" 2>/dev/null || cat "$CONF_OUT" > "$qf"
   else
-    info "QR: conf + MTU/DNS/S1–S4/H1–H4 (Amnezia и WG Tunnel)"
+    info "QR: компактный conf (без S/H, без пробелов)"
   fi
 
   echo
