@@ -10,7 +10,7 @@
 
 set -e
 
-SCRIPT_VERSION="0.10.28"
+SCRIPT_VERSION="0.10.29"
 
 REPO_URL="https://github.com/rndnaame/nfqws-menu"
 RAW_BASE="https://raw.githubusercontent.com/rndnaame/nfqws-menu/main"
@@ -647,20 +647,20 @@ blob_expected_sha256() {
 # ---------------------------------------------------------------------------
 # $1=url  [$2=min_bytes, по умолчанию 8000; для коротких installers — 2000]
 
-# Убить зависшие sh /tmp/nfqws-remote-*.sh (после обрыва SSH / Ctrl+C)
+# Убить зависшие sh /tmp/nfqws-remote-*.sh (обрыв SSH / Ctrl+C / дубли)
 _kill_stale_remote_sh() {
   _self="$$"
-  _parent="${PPID:-0}"
-  ps 2>/dev/null | while read -r _pid _rest; do
+  if command -v pkill >/dev/null 2>&1; then
+    pkill -9 -f '/tmp/nfqws-remote-[0-9][0-9]*\.sh' 2>/dev/null || true
+  fi
+  # BusyBox ps: PID в 1-м поле; grep [n] — без себя в списке grep
+  ps 2>/dev/null | grep -E '[n]fqws-remote-[0-9]+\.sh' | while read -r _line; do
+    _pid=$(printf '%s\n' "$_line" | awk '{print $1}')
     case "$_pid" in ''|*[!0-9]*) continue ;; esac
     [ "$_pid" = "$_self" ] && continue
-    [ "$_pid" = "$_parent" ] && continue
-    case "$_rest" in
-      *nfqws-remote-*.sh*)
-        kill -9 "$_pid" 2>/dev/null || true
-        ;;
-    esac
+    kill -9 "$_pid" 2>/dev/null || true
   done
+  sleep 1 2>/dev/null || true
   rm -f /tmp/nfqws-remote-*.sh 2>/dev/null || true
 }
 
@@ -674,10 +674,11 @@ _run_remote_sh_restore_traps() {
 }
 
 run_remote_sh() {
-  local url="$1" min_bytes="${2:-8000}" tmp rc=0
+  local url="$1" min_bytes="${2:-8000}" tmp rc=0 _rpid=""
   _kill_stale_remote_sh
   tmp="/tmp/nfqws-remote-$$.sh"
-  trap 'rm -f /tmp/nfqws-remote-$$.sh 2>/dev/null; _run_remote_sh_restore_traps' EXIT INT TERM
+  # при INT/TERM — убить дочерний remote, иначе остаются зомби sh
+  trap 'if [ -n "${_rpid:-}" ]; then kill -9 "$_rpid" 2>/dev/null; fi; rm -f /tmp/nfqws-remote-$$.sh 2>/dev/null; _run_remote_sh_restore_traps' EXIT INT TERM
 
   if ! download_sh_validated "$url" "$tmp" "$min_bytes"; then
     error "Не удалось скачать целый скрипт: $url"
@@ -691,11 +692,16 @@ run_remote_sh() {
   export PATH="/opt/bin:/opt/sbin:/opt/usr/bin:/bin:/sbin:/usr/bin:/usr/sbin:$PATH"
 
   # Полный tty — иначе интерактив (awg-menu и т.п.) не поднимается
+  # фон + wait: можно гарантированно kill по PID при обрыве
   if [ -c /dev/tty ]; then
-    sh "$tmp" < /dev/tty > /dev/tty 2>&1 || rc=$?
+    sh "$tmp" < /dev/tty > /dev/tty 2>&1 &
+    _rpid=$!
   else
-    sh "$tmp" || rc=$?
+    sh "$tmp" &
+    _rpid=$!
   fi
+  wait "$_rpid" 2>/dev/null || rc=$?
+  _rpid=""
   rm -f "$tmp"
   _run_remote_sh_restore_traps
   drain_stdin
