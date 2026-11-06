@@ -19,7 +19,7 @@
 #   sh installer_warpscout.sh
 #   curl -fsSL https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/installer_warpscout.sh | sh
 
-SCRIPT_VERSION="0.1.54"
+SCRIPT_VERSION="0.1.56"
 
 # ANSI (portable для ash/BusyBox)
 RED=$(printf '\033[0;31m')
@@ -2546,7 +2546,21 @@ ensure_qrencode() {
   return 0
 }
 
-# QR в терминал. Не трогать строки из пробелов — в -t ANSI они часть картинки.
+# Ширина терминала (для мобильного SSH)
+_term_cols() {
+  cols="${COLUMNS:-}"
+  if [ -z "$cols" ] && command -v tput >/dev/null 2>&1; then
+    cols=$(tput cols 2>/dev/null) || cols=""
+  fi
+  # stty как запасной вариант
+  if [ -z "$cols" ] && [ -c /dev/tty ]; then
+    cols=$(stty size < /dev/tty 2>/dev/null | awk '{print $2}') || cols=""
+  fi
+  case "$cols" in ''|*[!0-9]*) cols=80 ;; esac
+  printf '%s\n' "$cols"
+}
+
+# QR в терминал (узкий экран ломает QR переносом строк)
 print_qr_file() {
   f="$1"
   _qr=qrencode
@@ -2557,37 +2571,39 @@ print_qr_file() {
   if [ "$sz" -gt 1200 ]; then
     warn "Данные большие (${sz} байт) — QR может не читаться камерой."
   fi
-  # тихая зона сверху (камере WG Tunnel нужен отступ от текста)
+
+  cols=$(_term_cols)
+  # на узком экране (телефон) — компактнее
+  margin=2
+  ecl="M"
+  if [ "$cols" -lt 60 ]; then
+    margin=0
+    ecl="L"
+    warn "Узкий терминал (${cols} кол.) — QR часто ломается переносом строк."
+    warn "Переверните телефон горизонтально (широкий экран)."
+  fi
+
   printf '\n\n'
-  # -m 2 margin; -l M устойчивость к лёгким искажениям
   ok=0
-  if "$_qr" -t ANSIUTF8 -m 2 -l M < "$f" 2>/dev/null; then
+  if "$_qr" -t ANSIUTF8 -m "$margin" -l "$ecl" < "$f" 2>/dev/null; then
     ok=1
-  elif "$_qr" -t UTF8 -m 2 -l M < "$f" 2>/dev/null; then
+  elif "$_qr" -t UTF8 -m "$margin" -l "$ecl" < "$f" 2>/dev/null; then
     ok=1
-  elif "$_qr" -t ANSI -m 2 -l M < "$f" 2>/dev/null; then
+  elif "$_qr" -t ANSI -m "$margin" -l "$ecl" < "$f" 2>/dev/null; then
     ok=1
-  elif "$_qr" -t ASCII -m 2 -l M < "$f" 2>/dev/null; then
+  elif "$_qr" -t ASCII -m "$margin" -l "$ecl" < "$f" 2>/dev/null; then
     ok=1
   fi
   printf '\n\n'
+
   if [ "$ok" != "1" ]; then
     error "qrencode не смог построить QR."
     return 1
   fi
-  # подсказка, если терминал узкий (перенос строк ломает QR)
-  cols="${COLUMNS:-}"
-  if [ -z "$cols" ] && command -v tput >/dev/null 2>&1; then
-    cols=$(tput cols 2>/dev/null) || cols=""
+
+  if [ "$cols" -lt 60 ]; then
+    info "Если QR «полосками» — перенос строк; нужен горизонтальный экран."
   fi
-  case "$cols" in
-    ''|*[!0-9]*) ;;
-    *)
-      if [ "$cols" -lt 70 ]; then
-        warn "Ширина терминала ${cols} — разверните окно, иначе QR обрежется."
-      fi
-      ;;
-  esac
   return 0
 }
 
