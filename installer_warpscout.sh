@@ -19,7 +19,7 @@
 #   sh installer_warpscout.sh
 #   curl -fsSL https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/installer_warpscout.sh | sh
 
-SCRIPT_VERSION="0.1.57"
+SCRIPT_VERSION="0.1.58"
 
 # ANSI (portable для ash/BusyBox)
 RED=$(printf '\033[0;31m')
@@ -2543,7 +2543,7 @@ ensure_qrencode() {
 }
 
 
-# QR в терминал: всегда компактный (-m 0 -l L)
+# QR в терминал: всегда компактный (-m 1 -l L)
 print_qr_file() {
   f="$1"
   _qr=qrencode
@@ -2552,13 +2552,13 @@ print_qr_file() {
 
   printf '\n'
   ok=0
-  if "$_qr" -t ANSIUTF8 -m 0 -l L < "$f" 2>/dev/null; then
+  if "$_qr" -t ANSIUTF8 -m 1 -l L < "$f" 2>/dev/null; then
     ok=1
-  elif "$_qr" -t UTF8 -m 0 -l L < "$f" 2>/dev/null; then
+  elif "$_qr" -t UTF8 -m 1 -l L < "$f" 2>/dev/null; then
     ok=1
-  elif "$_qr" -t ANSI -m 0 -l L < "$f" 2>/dev/null; then
+  elif "$_qr" -t ANSI -m 1 -l L < "$f" 2>/dev/null; then
     ok=1
-  elif "$_qr" -t ASCII -m 0 -l L < "$f" 2>/dev/null; then
+  elif "$_qr" -t ASCII -m 1 -l L < "$f" 2>/dev/null; then
     ok=1
   fi
   printf '\n'
@@ -2613,7 +2613,7 @@ do_show_conf() {
     warn "Сборка компактного conf не удалась — QR из файла как есть."
     cp -f "$CONF_OUT" "$qf" 2>/dev/null || cat "$CONF_OUT" > "$qf"
   else
-    info "QR: компактный conf (без S/H, без пробелов)"
+    info "QR: компактный conf"
   fi
 
   echo

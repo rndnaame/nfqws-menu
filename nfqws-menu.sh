@@ -10,7 +10,7 @@
 
 set -e
 
-SCRIPT_VERSION="0.10.27"
+SCRIPT_VERSION="0.10.28"
 
 REPO_URL="https://github.com/rndnaame/nfqws-menu"
 RAW_BASE="https://raw.githubusercontent.com/rndnaame/nfqws-menu/main"
@@ -646,6 +646,24 @@ blob_expected_sha256() {
 # Удалённые .sh: скачать (validated) + выполнить на полном tty
 # ---------------------------------------------------------------------------
 # $1=url  [$2=min_bytes, по умолчанию 8000; для коротких installers — 2000]
+
+# Убить зависшие sh /tmp/nfqws-remote-*.sh (после обрыва SSH / Ctrl+C)
+_kill_stale_remote_sh() {
+  _self="$$"
+  _parent="${PPID:-0}"
+  ps 2>/dev/null | while read -r _pid _rest; do
+    case "$_pid" in ''|*[!0-9]*) continue ;; esac
+    [ "$_pid" = "$_self" ] && continue
+    [ "$_pid" = "$_parent" ] && continue
+    case "$_rest" in
+      *nfqws-remote-*.sh*)
+        kill -9 "$_pid" 2>/dev/null || true
+        ;;
+    esac
+  done
+  rm -f /tmp/nfqws-remote-*.sh 2>/dev/null || true
+}
+
 _run_remote_sh_restore_traps() {
   if [ -n "${MENU_PID:-}" ]; then
     trap 'upd_cleanup' EXIT
@@ -657,7 +675,7 @@ _run_remote_sh_restore_traps() {
 
 run_remote_sh() {
   local url="$1" min_bytes="${2:-8000}" tmp rc=0
-  rm -f /tmp/nfqws-remote-*.sh 2>/dev/null || true
+  _kill_stale_remote_sh
   tmp="/tmp/nfqws-remote-$$.sh"
   trap 'rm -f /tmp/nfqws-remote-$$.sh 2>/dev/null; _run_remote_sh_restore_traps' EXIT INT TERM
 
@@ -4251,7 +4269,7 @@ menu_awg_manager() {
   info "Открываем: 11. awg-manager"
   info "Источник: $url"
 
-  rm -f /tmp/nfqws-remote-*.sh 2>/dev/null || true
+  _kill_stale_remote_sh
   tmp="/tmp/nfqws-remote-$$.sh"
   trap 'rm -f /tmp/nfqws-remote-$$.sh 2>/dev/null; _run_remote_sh_restore_traps' EXIT INT TERM
 
