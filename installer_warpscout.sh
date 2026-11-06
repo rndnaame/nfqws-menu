@@ -19,7 +19,7 @@
 #   sh installer_warpscout.sh
 #   curl -fsSL https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/installer_warpscout.sh | sh
 
-SCRIPT_VERSION="0.1.58"
+SCRIPT_VERSION="0.1.59"
 
 # ANSI (portable для ash/BusyBox)
 RED=$(printf '\033[0;31m')
@@ -2506,6 +2506,9 @@ conf_for_qr() {
     [ -n "$_jc" ] && printf 'Jc=%s\n' "$_jc"
     [ -n "$_jmin" ] && printf 'Jmin=%s\n' "$_jmin"
     [ -n "$_jmax" ] && printf 'Jmax=%s\n' "$_jmax"
+    # AmneziaVPN: без S/H часто ErrorCode 1000
+    printf 'S1=0\nS2=0\nS3=0\nS4=0\n'
+    printf 'H1=1\nH2=2\nH3=3\nH4=4\n'
     [ -n "$_i1" ] && printf 'I1=%s\n' "$_i1"
     printf '%s\n' "[Peer]"
     printf 'PublicKey=%s\n' "$_pub"
@@ -2613,7 +2616,7 @@ do_show_conf() {
     warn "Сборка компактного conf не удалась — QR из файла как есть."
     cp -f "$CONF_OUT" "$qf" 2>/dev/null || cat "$CONF_OUT" > "$qf"
   else
-    info "QR: компактный conf"
+    info "QR: компактный conf (S/H для Amnezia)"
   fi
 
   echo
