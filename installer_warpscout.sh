@@ -19,7 +19,7 @@
 #   sh installer_warpscout.sh
 #   curl -fsSL https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/installer_warpscout.sh | sh
 
-SCRIPT_VERSION="0.1.52"
+SCRIPT_VERSION="0.1.53"
 
 # ANSI (portable для ash/BusyBox)
 RED=$(printf '\033[0;31m')
@@ -2604,47 +2604,27 @@ do_show_conf() {
   [ -n "$_i1" ] && info "I1:       $(show_i1_brief "$_i1")"
 
   echo
-  printf '%s\n' "${BOLD}QR-код:${NC}"
-  echo "  1) Как есть (WG Tunnel / raw conf)"
-  echo "  2) Для AmneziaVPN (S1–S4, H1–H4, MTU, DNS)"
-  echo "  0) Без QR"
-  echo
-  printf '  %sВыбор:%s ' "$BOLD" "$NC"
-  _qsel=$(read_choice)
-  echo
-  case "$_qsel" in
-    0|"") info "Без QR."; return 0 ;;
-    1|2) ;;
-    *) warn "Неверный выбор."; return 1 ;;
-  esac
+  if ! confirm_Y "Показать QR-код conf в терминале?"; then
+    return 0
+  fi
 
   ensure_tmpdir
   if ! ensure_qrencode; then
     return 1
   fi
 
+  # Один универсальный conf: WG-поля + S1–S4/H1–H4/MTU/DNS (Amnezia;
+  # WG Tunnel/обычный WG лишние ключи обычно игнорируют)
   qf="$TMPDIR/qr-conf.txt"
-  if [ "$_qsel" = "2" ]; then
-    if ! conf_for_amnezia "$CONF_OUT" > "$qf" 2>/dev/null; then
-      error "Не удалось нормализовать conf для Amnezia."
-      return 1
-    fi
-    info "QR: AmneziaVPN-формат (добавлены S1–S4=0, H1–H4=1..4 при отсутствии)"
-    printf '%s\n' "${DIM}──────── amnezia conf ────────${NC}"
-    # без огромного I1 в лог — только ключи
-    grep -iE '^(Address|DNS|MTU|Jc|Jmin|Jmax|S[1-4]|H[1-4]|I1|Endpoint|AllowedIPs|PersistentKeepalive|PublicKey|PrivateKey)' "$qf" 2>/dev/null | \
-      sed 's/^\([Pp]rivate[Kk]ey[[:space:]]*=[[:space:]]*\).*/\1***/;s/^\([Ii]1[[:space:]]*=[[:space:]]*\).*/\1…/' || true
-    printf '%s\n' "${DIM}──────────────────────────────${NC}"
-  else
+  if ! conf_for_amnezia "$CONF_OUT" > "$qf" 2>/dev/null; then
+    warn "Нормализация не удалась — QR из исходного conf."
     cp -f "$CONF_OUT" "$qf" 2>/dev/null || cat "$CONF_OUT" > "$qf"
-    info "QR: raw conf (как в файле)"
+  else
+    info "QR: conf + MTU/DNS/S1–S4/H1–H4 (Amnezia и WG Tunnel)"
   fi
 
   echo
   print_qr_file "$qf" || return 1
-  echo
-  printf '%s\n' "${DIM}WG Tunnel обычно ест raw (1). AmneziaVPN — лучше (2).${NC}"
-  printf '%s\n' "${DIM}ErrorCode 1000 у Amnezia часто из‑за DPI/сети телефона, не только формата.${NC}"
   return 0
 }
 
