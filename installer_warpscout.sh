@@ -19,7 +19,7 @@
 #   sh installer_warpscout.sh
 #   curl -fsSL https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/installer_warpscout.sh | sh
 
-SCRIPT_VERSION="0.1.51"
+SCRIPT_VERSION="0.1.52"
 
 # ANSI (portable для ash/BusyBox)
 RED=$(printf '\033[0;31m')
@@ -2546,24 +2546,29 @@ ensure_qrencode() {
   return 0
 }
 
-# QR без пустых строк между рядами (мобильные терминалы)
+# QR в терминал. Не трогать строки из пробелов — в -t ANSI они часть картинки.
 print_qr_file() {
   f="$1"
   _qr=qrencode
   command -v qrencode >/dev/null 2>&1 || _qr=/opt/bin/qrencode
+  [ -x "$_qr" ] || _qr=/opt/bin/qrencode
   sz=$(wc -c < "$f" 2>/dev/null | tr -d ' ')
   case "$sz" in ''|*[!0-9]*) sz=0 ;; esac
   if [ "$sz" -gt 1200 ]; then
     warn "Данные большие (${sz} байт) — QR может не читаться камерой."
   fi
-  # ANSI (плотные блоки) + убрать пустые строки; fallback UTF8/ASCII
-  if "$_qr" -t ANSI -m 1 < "$f" 2>/dev/null | sed '/^[[:space:]]*$/d'; then
+  # ANSIUTF8 (▀▄) — как раньше, читается в MobaXterm/SSH
+  # -m 1 чуть компактнее; без sed (sed ломал ANSI-пробелы)
+  if "$_qr" -t ANSIUTF8 -m 1 < "$f" 2>/dev/null; then
     return 0
   fi
-  if "$_qr" -t ANSIUTF8 -m 1 < "$f" 2>/dev/null | sed '/^[[:space:]]*$/d'; then
+  if "$_qr" -t UTF8 -m 1 < "$f" 2>/dev/null; then
     return 0
   fi
-  if "$_qr" -t UTF8 -m 1 < "$f" 2>/dev/null | sed '/^[[:space:]]*$/d'; then
+  if "$_qr" -t ANSI -m 1 < "$f" 2>/dev/null; then
+    return 0
+  fi
+  if "$_qr" -t ASCII -m 1 < "$f" 2>/dev/null; then
     return 0
   fi
   error "qrencode не смог построить QR."
@@ -2627,8 +2632,8 @@ do_show_conf() {
     info "QR: AmneziaVPN-формат (добавлены S1–S4=0, H1–H4=1..4 при отсутствии)"
     printf '%s\n' "${DIM}──────── amnezia conf ────────${NC}"
     # без огромного I1 в лог — только ключи
-    grep -iE '^(Address|DNS|MTU|Jc|Jmin|Jmax|S[1-4]|H[1-4]|Endpoint|AllowedIPs|PersistentKeepalive|PublicKey|PrivateKey)' "$qf" 2>/dev/null | \
-      sed 's/^\([Pp]rivate[Kk]ey[[:space:]]*=[[:space:]]*\).*/\1***/' || true
+    grep -iE '^(Address|DNS|MTU|Jc|Jmin|Jmax|S[1-4]|H[1-4]|I1|Endpoint|AllowedIPs|PersistentKeepalive|PublicKey|PrivateKey)' "$qf" 2>/dev/null | \
+      sed 's/^\([Pp]rivate[Kk]ey[[:space:]]*=[[:space:]]*\).*/\1***/;s/^\([Ii]1[[:space:]]*=[[:space:]]*\).*/\1…/' || true
     printf '%s\n' "${DIM}──────────────────────────────${NC}"
   else
     cp -f "$CONF_OUT" "$qf" 2>/dev/null || cat "$CONF_OUT" > "$qf"
