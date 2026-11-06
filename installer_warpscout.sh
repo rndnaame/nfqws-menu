@@ -19,7 +19,7 @@
 #   sh installer_warpscout.sh
 #   curl -fsSL https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/installer_warpscout.sh | sh
 
-SCRIPT_VERSION="0.1.53"
+SCRIPT_VERSION="0.1.54"
 
 # ANSI (portable для ash/BusyBox)
 RED=$(printf '\033[0;31m')
@@ -2557,22 +2557,38 @@ print_qr_file() {
   if [ "$sz" -gt 1200 ]; then
     warn "Данные большие (${sz} байт) — QR может не читаться камерой."
   fi
-  # ANSIUTF8 (▀▄) — как раньше, читается в MobaXterm/SSH
-  # -m 1 чуть компактнее; без sed (sed ломал ANSI-пробелы)
-  if "$_qr" -t ANSIUTF8 -m 1 < "$f" 2>/dev/null; then
-    return 0
+  # тихая зона сверху (камере WG Tunnel нужен отступ от текста)
+  printf '\n\n'
+  # -m 2 margin; -l M устойчивость к лёгким искажениям
+  ok=0
+  if "$_qr" -t ANSIUTF8 -m 2 -l M < "$f" 2>/dev/null; then
+    ok=1
+  elif "$_qr" -t UTF8 -m 2 -l M < "$f" 2>/dev/null; then
+    ok=1
+  elif "$_qr" -t ANSI -m 2 -l M < "$f" 2>/dev/null; then
+    ok=1
+  elif "$_qr" -t ASCII -m 2 -l M < "$f" 2>/dev/null; then
+    ok=1
   fi
-  if "$_qr" -t UTF8 -m 1 < "$f" 2>/dev/null; then
-    return 0
+  printf '\n\n'
+  if [ "$ok" != "1" ]; then
+    error "qrencode не смог построить QR."
+    return 1
   fi
-  if "$_qr" -t ANSI -m 1 < "$f" 2>/dev/null; then
-    return 0
+  # подсказка, если терминал узкий (перенос строк ломает QR)
+  cols="${COLUMNS:-}"
+  if [ -z "$cols" ] && command -v tput >/dev/null 2>&1; then
+    cols=$(tput cols 2>/dev/null) || cols=""
   fi
-  if "$_qr" -t ASCII -m 1 < "$f" 2>/dev/null; then
-    return 0
-  fi
-  error "qrencode не смог построить QR."
-  return 1
+  case "$cols" in
+    ''|*[!0-9]*) ;;
+    *)
+      if [ "$cols" -lt 70 ]; then
+        warn "Ширина терминала ${cols} — разверните окно, иначе QR обрежется."
+      fi
+      ;;
+  esac
+  return 0
 }
 
 do_show_conf() {
