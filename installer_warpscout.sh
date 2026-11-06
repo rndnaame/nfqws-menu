@@ -19,7 +19,7 @@
 #   sh installer_warpscout.sh
 #   curl -fsSL https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/installer_warpscout.sh | sh
 
-SCRIPT_VERSION="0.1.59"
+SCRIPT_VERSION="0.1.66"
 
 # ANSI (portable для ash/BusyBox)
 RED=$(printf '\033[0;31m')
@@ -2475,11 +2475,10 @@ do_remove() {
 # ---------------------------------------------------------------------------
 
 
-# Компактный conf для QR (меньше байт → меньше модулей → влезает в узкий терминал)
+# Conf для QR: стандартный вид + S/H (Amnezia) + MTU/DNS
 conf_for_qr() {
   conf="$1"
   [ -f "$conf" ] || return 1
-  # вытащить поля и собрать без пробелов вокруг =; без S/H (дефолты клиента)
   _pk=$(grep -iE '^[[:space:]]*PrivateKey[[:space:]]*=' "$conf" | head -1 | sed 's/^[^=]*=[[:space:]]*//;s/[[:space:]]*$//')
   _addr=$(grep -iE '^[[:space:]]*Address[[:space:]]*=' "$conf" | head -1 | sed 's/^[^=]*=[[:space:]]*//;s/[[:space:]]*$//')
   _dns=$(grep -iE '^[[:space:]]*DNS[[:space:]]*=' "$conf" | head -1 | sed 's/^[^=]*=[[:space:]]*//;s/[[:space:]]*$//')
@@ -2493,30 +2492,30 @@ conf_for_qr() {
   _aip=$(grep -iE '^[[:space:]]*AllowedIPs[[:space:]]*=' "$conf" | head -1 | sed 's/^[^=]*=[[:space:]]*//;s/[[:space:]]*$//')
   _pka=$(grep -iE '^[[:space:]]*PersistentKeepalive[[:space:]]*=' "$conf" | head -1 | sed 's/^[^=]*=[[:space:]]*//;s/[[:space:]]*$//')
   [ -n "$_pk" ] && [ -n "$_pub" ] && [ -n "$_ep" ] || return 1
-  [ -n "$_dns" ] || _dns="1.1.1.1"
+  [ -n "$_dns" ] || _dns="1.1.1.1, 1.0.0.1"
   [ -n "$_mtu" ] || _mtu="1280"
   [ -n "$_aip" ] || _aip="0.0.0.0/0"
   [ -n "$_pka" ] || _pka="25"
   {
     printf '%s\n' "[Interface]"
-    printf 'PrivateKey=%s\n' "$_pk"
-    [ -n "$_addr" ] && printf 'Address=%s\n' "$_addr"
-    printf 'DNS=%s\n' "$_dns"
-    printf 'MTU=%s\n' "$_mtu"
-    [ -n "$_jc" ] && printf 'Jc=%s\n' "$_jc"
-    [ -n "$_jmin" ] && printf 'Jmin=%s\n' "$_jmin"
-    [ -n "$_jmax" ] && printf 'Jmax=%s\n' "$_jmax"
-    # AmneziaVPN: без S/H часто ErrorCode 1000
-    printf 'S1=0\nS2=0\nS3=0\nS4=0\n'
-    printf 'H1=1\nH2=2\nH3=3\nH4=4\n'
-    [ -n "$_i1" ] && printf 'I1=%s\n' "$_i1"
+    printf 'PrivateKey = %s\n' "$_pk"
+    [ -n "$_addr" ] && printf 'Address = %s\n' "$_addr"
+    printf 'DNS = %s\n' "$_dns"
+    printf 'MTU = %s\n' "$_mtu"
+    [ -n "$_jc" ] && printf 'Jc = %s\n' "$_jc"
+    [ -n "$_jmin" ] && printf 'Jmin = %s\n' "$_jmin"
+    [ -n "$_jmax" ] && printf 'Jmax = %s\n' "$_jmax"
+    printf 'S1 = 0\nS2 = 0\nS3 = 0\nS4 = 0\n'
+    printf 'H1 = 1\nH2 = 2\nH3 = 3\nH4 = 4\n'
+    [ -n "$_i1" ] && printf 'I1 = %s\n' "$_i1"
     printf '%s\n' "[Peer]"
-    printf 'PublicKey=%s\n' "$_pub"
-    printf 'Endpoint=%s\n' "$_ep"
-    printf 'AllowedIPs=%s\n' "$_aip"
-    printf 'PersistentKeepalive=%s\n' "$_pka"
+    printf 'PublicKey = %s\n' "$_pub"
+    printf 'Endpoint = %s\n' "$_ep"
+    printf 'AllowedIPs = %s\n' "$_aip"
+    printf 'PersistentKeepalive = %s\n' "$_pka"
   }
 }
+
 
 ensure_qrencode() {
   export PATH="/opt/bin:/opt/sbin:${PATH}"
@@ -2546,25 +2545,23 @@ ensure_qrencode() {
 }
 
 
-# QR в терминал: всегда компактный (-m 1 -l L)
+# QR в терминал: -m 2 quiet zone, без пустых строк вокруг
 print_qr_file() {
   f="$1"
   _qr=qrencode
   command -v qrencode >/dev/null 2>&1 || _qr=/opt/bin/qrencode
   [ -x "$_qr" ] || _qr=/opt/bin/qrencode
 
-  printf '\n'
   ok=0
-  if "$_qr" -t ANSIUTF8 -m 1 -l L < "$f" 2>/dev/null; then
+  if "$_qr" -t ANSIUTF8 -m 2 -l L < "$f" 2>/dev/null; then
     ok=1
-  elif "$_qr" -t UTF8 -m 1 -l L < "$f" 2>/dev/null; then
+  elif "$_qr" -t UTF8 -m 2 -l L < "$f" 2>/dev/null; then
     ok=1
-  elif "$_qr" -t ANSI -m 1 -l L < "$f" 2>/dev/null; then
+  elif "$_qr" -t ANSI -m 2 -l L < "$f" 2>/dev/null; then
     ok=1
-  elif "$_qr" -t ASCII -m 1 -l L < "$f" 2>/dev/null; then
+  elif "$_qr" -t ASCII -m 2 -l L < "$f" 2>/dev/null; then
     ok=1
   fi
-  printf '\n'
   if [ "$ok" != "1" ]; then
     error "qrencode не смог построить QR."
     return 1
@@ -2616,7 +2613,7 @@ do_show_conf() {
     warn "Сборка компактного conf не удалась — QR из файла как есть."
     cp -f "$CONF_OUT" "$qf" 2>/dev/null || cat "$CONF_OUT" > "$qf"
   else
-    info "QR: компактный conf (S/H для Amnezia)"
+    info "QR: conf + S/H (Amnezia / WG Tunnel)"
   fi
 
   echo
