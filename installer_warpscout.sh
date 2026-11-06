@@ -19,7 +19,7 @@
 #   sh installer_warpscout.sh
 #   curl -fsSL https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/installer_warpscout.sh | sh
 
-SCRIPT_VERSION="0.1.50"
+SCRIPT_VERSION="0.1.51"
 
 # ANSI (portable для ash/BusyBox)
 RED=$(printf '\033[0;31m')
@@ -2473,6 +2473,103 @@ do_remove() {
 # ---------------------------------------------------------------------------
 # Показать сохранённый conf (+ опционально QR, если есть qrencode)
 # ---------------------------------------------------------------------------
+# Дополнить conf полями, которые часто ждут AmneziaVPN (S1–S4, H1–H4, MTU, DNS)
+# stdout → нормализованный conf
+conf_for_amnezia() {
+  conf="$1"
+  [ -f "$conf" ] || return 1
+  awk '
+    BEGIN {
+      inif=0; seen_s1=0; seen_s2=0; seen_s3=0; seen_s4=0
+      seen_h1=0; seen_h2=0; seen_h3=0; seen_h4=0
+      seen_mtu=0; seen_dns=0
+    }
+    function flush_missing() {
+      if (!seen_mtu) print "MTU = 1280"
+      if (!seen_dns) print "DNS = 1.1.1.1, 1.0.0.1"
+      if (!seen_s1) print "S1 = 0"
+      if (!seen_s2) print "S2 = 0"
+      if (!seen_s3) print "S3 = 0"
+      if (!seen_s4) print "S4 = 0"
+      if (!seen_h1) print "H1 = 1"
+      if (!seen_h2) print "H2 = 2"
+      if (!seen_h3) print "H3 = 3"
+      if (!seen_h4) print "H4 = 4"
+      seen_s1=seen_s2=seen_s3=seen_s4=1
+      seen_h1=seen_h2=seen_h3=seen_h4=1
+      seen_mtu=seen_dns=1
+    }
+    /^\[Interface\]/ { inif=1; print; next }
+    /^\[/ {
+      if (inif) { flush_missing(); inif=0 }
+      print; next
+    }
+    inif && /^[[:space:]]*[Mm][Tt][Uu][[:space:]]*=/ { seen_mtu=1 }
+    inif && /^[[:space:]]*[Dd][Nn][Ss][[:space:]]*=/ { seen_dns=1 }
+    inif && /^[[:space:]]*[Ss]1[[:space:]]*=/ { seen_s1=1 }
+    inif && /^[[:space:]]*[Ss]2[[:space:]]*=/ { seen_s2=1 }
+    inif && /^[[:space:]]*[Ss]3[[:space:]]*=/ { seen_s3=1 }
+    inif && /^[[:space:]]*[Ss]4[[:space:]]*=/ { seen_s4=1 }
+    inif && /^[[:space:]]*[Hh]1[[:space:]]*=/ { seen_h1=1 }
+    inif && /^[[:space:]]*[Hh]2[[:space:]]*=/ { seen_h2=1 }
+    inif && /^[[:space:]]*[Hh]3[[:space:]]*=/ { seen_h3=1 }
+    inif && /^[[:space:]]*[Hh]4[[:space:]]*=/ { seen_h4=1 }
+    { print }
+    END { if (inif) flush_missing() }
+  ' "$conf"
+}
+
+ensure_qrencode() {
+  export PATH="/opt/bin:/opt/sbin:${PATH}"
+  if command -v qrencode >/dev/null 2>&1 || [ -x /opt/bin/qrencode ]; then
+    return 0
+  fi
+  if ! command -v opkg >/dev/null 2>&1; then
+    error "Нет qrencode и нет opkg — QR недоступен."
+    return 1
+  fi
+  info "Установка qrencode (opkg install qrencode)…"
+  if ! opkg install qrencode 2>&1; then
+    warn "opkg install qrencode не удался — пробуем update…"
+    opkg update 2>/dev/null || true
+    if ! opkg install qrencode 2>&1; then
+      error "Не удалось установить qrencode."
+      return 1
+    fi
+  fi
+  hash -r 2>/dev/null || true
+  if ! command -v qrencode >/dev/null 2>&1 && [ ! -x /opt/bin/qrencode ]; then
+    error "qrencode установлен, но не найден в PATH."
+    return 1
+  fi
+  info "qrencode установлен."
+  return 0
+}
+
+# QR без пустых строк между рядами (мобильные терминалы)
+print_qr_file() {
+  f="$1"
+  _qr=qrencode
+  command -v qrencode >/dev/null 2>&1 || _qr=/opt/bin/qrencode
+  sz=$(wc -c < "$f" 2>/dev/null | tr -d ' ')
+  case "$sz" in ''|*[!0-9]*) sz=0 ;; esac
+  if [ "$sz" -gt 1200 ]; then
+    warn "Данные большие (${sz} байт) — QR может не читаться камерой."
+  fi
+  # ANSI (плотные блоки) + убрать пустые строки; fallback UTF8/ASCII
+  if "$_qr" -t ANSI -m 1 < "$f" 2>/dev/null | sed '/^[[:space:]]*$/d'; then
+    return 0
+  fi
+  if "$_qr" -t ANSIUTF8 -m 1 < "$f" 2>/dev/null | sed '/^[[:space:]]*$/d'; then
+    return 0
+  fi
+  if "$_qr" -t UTF8 -m 1 < "$f" 2>/dev/null | sed '/^[[:space:]]*$/d'; then
+    return 0
+  fi
+  error "qrencode не смог построить QR."
+  return 1
+}
+
 do_show_conf() {
   echo
   info "Сохранённый конфиг"
@@ -2502,51 +2599,47 @@ do_show_conf() {
   [ -n "$_i1" ] && info "I1:       $(show_i1_brief "$_i1")"
 
   echo
-  if ! confirm_Y "Показать QR-код conf в терминале?"; then
-    return 0
+  printf '%s\n' "${BOLD}QR-код:${NC}"
+  echo "  1) Как есть (WG Tunnel / raw conf)"
+  echo "  2) Для AmneziaVPN (S1–S4, H1–H4, MTU, DNS)"
+  echo "  0) Без QR"
+  echo
+  printf '  %sВыбор:%s ' "$BOLD" "$NC"
+  _qsel=$(read_choice)
+  echo
+  case "$_qsel" in
+    0|"") info "Без QR."; return 0 ;;
+    1|2) ;;
+    *) warn "Неверный выбор."; return 1 ;;
+  esac
+
+  ensure_tmpdir
+  if ! ensure_qrencode; then
+    return 1
   fi
 
-  if ! command -v qrencode >/dev/null 2>&1; then
-    if ! command -v opkg >/dev/null 2>&1; then
-      error "Нет qrencode и нет opkg — QR недоступен."
+  qf="$TMPDIR/qr-conf.txt"
+  if [ "$_qsel" = "2" ]; then
+    if ! conf_for_amnezia "$CONF_OUT" > "$qf" 2>/dev/null; then
+      error "Не удалось нормализовать conf для Amnezia."
       return 1
     fi
-    info "Установка qrencode (opkg install qrencode)…"
-    # PATH Entware
-    export PATH="/opt/bin:/opt/sbin:${PATH}"
-    if ! opkg install qrencode 2>&1; then
-      warn "opkg install qrencode не удался — пробуем update…"
-      opkg update 2>/dev/null || true
-      if ! opkg install qrencode 2>&1; then
-        error "Не удалось установить qrencode."
-        return 1
-      fi
-    fi
-    hash -r 2>/dev/null || true
-    if ! command -v qrencode >/dev/null 2>&1; then
-      # иногда бинарь только в /opt/bin
-      if [ -x /opt/bin/qrencode ]; then
-        :
-      else
-        error "qrencode установлен, но не найден в PATH."
-        return 1
-      fi
-    fi
-    info "qrencode установлен."
+    info "QR: AmneziaVPN-формат (добавлены S1–S4=0, H1–H4=1..4 при отсутствии)"
+    printf '%s\n' "${DIM}──────── amnezia conf ────────${NC}"
+    # без огромного I1 в лог — только ключи
+    grep -iE '^(Address|DNS|MTU|Jc|Jmin|Jmax|S[1-4]|H[1-4]|Endpoint|AllowedIPs|PersistentKeepalive|PublicKey|PrivateKey)' "$qf" 2>/dev/null | \
+      sed 's/^\([Pp]rivate[Kk]ey[[:space:]]*=[[:space:]]*\).*/\1***/' || true
+    printf '%s\n' "${DIM}──────────────────────────────${NC}"
+  else
+    cp -f "$CONF_OUT" "$qf" 2>/dev/null || cat "$CONF_OUT" > "$qf"
+    info "QR: raw conf (как в файле)"
   fi
 
-  info "QR (qrencode -t ANSIUTF8)…"
-  if [ "$sz" -gt 1200 ]; then
-    warn "Conf большой (${sz} байт) — QR может не читаться камерой."
-  fi
-  _qr=qrencode
-  command -v qrencode >/dev/null 2>&1 || _qr=/opt/bin/qrencode
-  if ! "$_qr" -t ANSIUTF8 < "$CONF_OUT" 2>/dev/null; then
-    if ! "$_qr" -t ANSI < "$CONF_OUT" 2>/dev/null; then
-      error "qrencode не смог построить QR."
-      return 1
-    fi
-  fi
+  echo
+  print_qr_file "$qf" || return 1
+  echo
+  printf '%s\n' "${DIM}WG Tunnel обычно ест raw (1). AmneziaVPN — лучше (2).${NC}"
+  printf '%s\n' "${DIM}ErrorCode 1000 у Amnezia часто из‑за DPI/сети телефона, не только формата.${NC}"
   return 0
 }
 
