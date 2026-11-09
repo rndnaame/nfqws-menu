@@ -19,7 +19,7 @@
 #   sh installer_warpscout.sh
 #   curl -fsSL https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/installer_warpscout.sh | sh
 
-SCRIPT_VERSION="0.1.67"
+SCRIPT_VERSION="0.1.68"
 
 # ANSI (portable для ash/BusyBox)
 RED=$(printf '\033[0;31m')
@@ -2160,7 +2160,16 @@ check_url_via_iface() {
       ;;
   esac
   _tm=""
-  [ -n "$_ms" ] && _tm=" · ${_ms} ms"
+  if [ -n "$_ms" ]; then
+    # до 700 зелёный, 700–2000 жёлтый, >2000 красный
+    _tc="$GREEN"
+    if [ "$_ms" -gt 2000 ] 2>/dev/null; then
+      _tc="$RED"
+    elif [ "$_ms" -gt 700 ] 2>/dev/null; then
+      _tc="$YELLOW"
+    fi
+    _tm=" · ${_tc}${_ms} ms${NC}"
+  fi
   err=""
   [ -s "$errf" ] && err=$(tr '\n' ' ' < "$errf" | head -c 100)
   rm -f "$errf"
