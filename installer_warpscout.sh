@@ -19,7 +19,7 @@
 #   sh installer_warpscout.sh
 #   curl -fsSL https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/installer_warpscout.sh | sh
 
-SCRIPT_VERSION="0.1.66"
+SCRIPT_VERSION="0.1.67"
 
 # ANSI (portable для ash/BusyBox)
 RED=$(printf '\033[0;31m')
@@ -2142,27 +2142,39 @@ check_url_via_iface() {
   fi
   errf="$TMPDIR/curl-err-$$"
   mkdir -p "$TMPDIR" 2>/dev/null || true
-  code=$(curl -sS -o /dev/null -w '%{http_code}' \
+  # http_code|time_total (сек) — показываем время ответа
+  _out=$(curl -sS -o /dev/null -w '%{http_code}|%{time_total}' \
     --connect-timeout 5 --max-time 10 \
     --interface "$ifc" -L "$url" 2>"$errf") || true
-  code=$(printf '%s' "$code" | tr -d '\r\n ')
+  code=$(printf '%s' "$_out" | cut -d'|' -f1 | tr -d '\r\n ')
+  _sec=$(printf '%s' "$_out" | cut -d'|' -f2 | tr -d '\r\n ')
   case "$code" in
     ''|*[!0-9]*) code="000" ;;
   esac
+  # сек → мс (ash без printf %.0f — через awk)
+  _ms=""
+  case "$_sec" in
+    ''|*[!0-9.]*) _ms="" ;;
+    *)
+      _ms=$(awk -v s="$_sec" 'BEGIN{printf "%d", s*1000+0.5}' 2>/dev/null) || _ms=""
+      ;;
+  esac
+  _tm=""
+  [ -n "$_ms" ] && _tm=" · ${_ms} ms"
   err=""
   [ -s "$errf" ] && err=$(tr '\n' ' ' < "$errf" | head -c 100)
   rm -f "$errf"
   case "$code" in
     2??|3??)
-      info "$label: OK (HTTP $code) via $ifc"
+      info "$label: OK (HTTP $code)${_tm} via $ifc"
       return 0
       ;;
     000)
-      warn "$label: нет ответа via $ifc${err:+ — $err}"
+      warn "$label: нет ответа${_tm} via $ifc${err:+ — $err}"
       return 1
       ;;
     *)
-      warn "$label: HTTP $code via $ifc${err:+ — $err}"
+      warn "$label: HTTP $code${_tm} via $ifc${err:+ — $err}"
       return 1
       ;;
   esac
