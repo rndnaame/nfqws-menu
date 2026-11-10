@@ -10,7 +10,7 @@
 
 set -e
 
-SCRIPT_VERSION="0.10.35"
+SCRIPT_VERSION="0.10.36"
 
 REPO_URL="https://github.com/rndnaame/nfqws-menu"
 RAW_BASE="https://raw.githubusercontent.com/rndnaame/nfqws-menu/main"
@@ -4598,14 +4598,16 @@ awg_manager_upx_needs_update() {
   return 1
 }
 
-# Тихое обновление UPX awg-manager (без меню 11). Вывод installer → лог.
+# Тихое обновление UPX awg-manager (без меню / без вопросов на tty).
 update_awg_manager_upx_auto() {
   local url="${AWG_MANAGER_INSTALL_URL:-https://raw.githubusercontent.com/rndnaame/awg-compressed/main/install-compressed.sh}"
   local tmp rc=0 min_bytes=8000 sb_env=0 log="/tmp/nfqws-awg-upx.$$.log"
+  local ver_before ver_after
 
+  ver_before=$(pkg_version "awg-manager" 2>/dev/null || true)
   _kill_stale_remote_sh 2>/dev/null || true
   tmp="/tmp/nfqws-remote-$$.sh"
-  trap 'rm -f /tmp/nfqws-remote-$$.sh "$log" 2>/dev/null; _run_remote_sh_restore_traps' EXIT INT TERM
+  trap 'rm -f /tmp/nfqws-remote-$$.sh 2>/dev/null; _run_remote_sh_restore_traps' EXIT INT TERM
 
   if ! download_sh_validated "$url" "$tmp" "$min_bytes"; then
     error "Не удалось скачать install-compressed.sh"
@@ -4618,10 +4620,25 @@ update_awg_manager_upx_auto() {
   export PATH="/opt/bin:/opt/sbin:/opt/usr/bin:/bin:/sbin:/usr/bin:/usr/sbin:$PATH"
   _patch_awg_install_arch "$tmp" 2>/dev/null || true
 
-  if grep -q 'read -r answer < /dev/tty' "$tmp" 2>/dev/null; then
-    sed -i 's/read -r answer < \/dev\/tty || answer="$default"/answer="$default"/g' "$tmp" 2>/dev/null || \
-      sed -i 's|read -r answer < /dev/tty || answer="$default"|answer="$default"|g' "$tmp" 2>/dev/null || true
-  fi
+  # Жёстко: ask/yes_no без /dev/tty (default из 2-го аргумента)
+  awk '
+    BEGIN { skip = 0 }
+    /^ask\(\) \{/ {
+      print "ask() { answer=\"$2\"; [ -z \"$answer\" ] && answer=\"\"; echo \"$answer\"; }"
+      skip = 1; next
+    }
+    /^yes_no\(\) \{/ {
+      print "yes_no() {"
+      print "  case \"$2\" in y|Y|yes|YES) echo 1 ;; *) echo 0 ;; esac"
+      print "}"
+      skip = 1; next
+    }
+    skip {
+      if (/^\}/) skip = 0
+      next
+    }
+    { print }
+  ' "$tmp" > "${tmp}.ni" && mv "${tmp}.ni" "$tmp"
 
   if [ -x /opt/etc/awg-manager/singbox/sing-box ]; then
     _sb=$(wc -c < /opt/etc/awg-manager/singbox/sing-box 2>/dev/null | tr -d ' \t\n\r')
@@ -4631,16 +4648,33 @@ update_awg_manager_upx_auto() {
     esac
   fi
 
+  # без tty: installer не должен спрашивать
   INSTALL_AWG=1 INSTALL_SB="$sb_env" sh "$tmp" </dev/null >"$log" 2>&1 || rc=$?
-  if [ "$rc" -ne 0 ]; then
-    warn "awg-compressed exit $rc (хвост лога):"
-    tail -15 "$log" 2>/dev/null || true
+
+  refresh_opkg_cache 2>/dev/null || true
+  ver_after=$(pkg_version "awg-manager" 2>/dev/null || true)
+
+  # installer иногда exit 1 после успешного opkg install — смотрим версию и лог
+  if [ -n "$ver_after" ] && [ -n "$ver_before" ] && [ "$ver_after" != "$ver_before" ]; then
+    rc=0
+  elif grep -qE 'Готово|installed successfully|→ .* \(upgrade\)|→ .* \(install\)' "$log" 2>/dev/null; then
+    rc=0
   fi
+
+  if [ "$rc" -ne 0 ]; then
+    warn "awg-compressed: ошибка (код $rc), хвост лога:"
+    tail -20 "$log" 2>/dev/null || true
+  else
+    [ -n "$ver_after" ] && [ "$ver_after" != "$ver_before" ] && \
+      info "    awg-manager: ${ver_before:-?} → $ver_after"
+  fi
+
   rm -f "$tmp" "$log"
   _run_remote_sh_restore_traps
   drain_stdin 2>/dev/null || true
   return "$rc"
 }
+
 
 # opkg update/upgrade без простыни Downloading… (лог при ошибке).
 _opkg_quiet() {
