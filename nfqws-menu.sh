@@ -10,7 +10,7 @@
 
 set -e
 
-SCRIPT_VERSION="0.10.32"
+SCRIPT_VERSION="0.10.34"
 
 REPO_URL="https://github.com/rndnaame/nfqws-menu"
 RAW_BASE="https://raw.githubusercontent.com/rndnaame/nfqws-menu/main"
@@ -4577,13 +4577,60 @@ is_awg_manager_upx() {
   is_awg_manager_installed || return 1
   for bin in /opt/sbin/awg-manager /opt/bin/awg-manager; do
     [ -x "$bin" ] || continue
-    b=$(wc -c < "$bin" 2>/dev/null | tr -d ' \t\n\r')
+    b=$(wc -c < "$bin" 2>/dev/null | tr -d ' 	
+')
     case "$b" in ''|*[!0-9]*) continue ;; esac
-    # нижняя граница: мусор/заглушка; верхняя: порог UPX из install-compressed.sh
     [ "$b" -gt 100000 ] && [ "$b" -lt 10485760 ] && return 0
   done
   return 1
 }
+
+# Тихое обновление UPX awg-manager (без меню 11 / без вопросов).
+# INSTALL_AWG=1 → install-compressed.sh; ask()/yes_no патчатся на default (Y для upgrade).
+update_awg_manager_upx_auto() {
+  local url="${AWG_MANAGER_INSTALL_URL:-https://raw.githubusercontent.com/rndnaame/awg-compressed/main/install-compressed.sh}"
+  local tmp rc=0 min_bytes=8000 sb_env=0
+
+  info "Скачивание awg-compressed install-compressed.sh ..."
+  _kill_stale_remote_sh 2>/dev/null || true
+  tmp="/tmp/nfqws-remote-$$.sh"
+  trap 'rm -f /tmp/nfqws-remote-$$.sh 2>/dev/null; _run_remote_sh_restore_traps' EXIT INT TERM
+
+  if ! download_sh_validated "$url" "$tmp" "$min_bytes"; then
+    error "Не удалось скачать install-compressed.sh"
+    rm -f "$tmp"
+    _run_remote_sh_restore_traps
+    return 1
+  fi
+
+  opkg_kill_others 2>/dev/null || true
+  export PATH="/opt/bin:/opt/sbin:/opt/usr/bin:/bin:/sbin:/usr/bin:/usr/sbin:$PATH"
+  _patch_awg_install_arch "$tmp" 2>/dev/null || true
+
+  # ask() в installer читает /dev/tty — для авто-режима всегда default (upgrade → Y)
+  if grep -q 'read -r answer < /dev/tty' "$tmp" 2>/dev/null; then
+    sed -i 's/read -r answer < \/dev\/tty || answer="$default"/answer="$default"/g' "$tmp" 2>/dev/null || \
+      sed -i 's|read -r answer < /dev/tty || answer="$default"|answer="$default"|g' "$tmp" 2>/dev/null || true
+  fi
+
+  # sing-box тоже UPX (<20M) — обновить сжатый вместе с AWG
+  if [ -x /opt/etc/awg-manager/singbox/sing-box ]; then
+    _sb=$(wc -c < /opt/etc/awg-manager/singbox/sing-box 2>/dev/null | tr -d ' 	
+')
+    case "$_sb" in
+      ''|*[!0-9]*) ;;
+      *) [ "$_sb" -gt 100000 ] && [ "$_sb" -lt 20971520 ] && sb_env=1 ;;
+    esac
+  fi
+
+  info "Авто-установка UPX (INSTALL_AWG=1 INSTALL_SB=$sb_env) ..."
+  INSTALL_AWG=1 INSTALL_SB="$sb_env" sh "$tmp" </dev/null || rc=$?
+  rm -f "$tmp"
+  _run_remote_sh_restore_traps
+  drain_stdin 2>/dev/null || true
+  return "$rc"
+}
+
 
 remove_awg_manager() {
   if is_installed "awg-manager"; then
@@ -5152,15 +5199,13 @@ menu_remove() {
 # Сервисные утилиты (S / U)
 # ---------------------------------------------------------------------------
 opkg_upgrade_all() {
-  # Порядок по рекомендации Entware/Keenetic forum:
-  # 1) основной репо bin.entware.net (не зеркало)
-  # 2) opkg update
-  # 3) opkg upgrade busybox poorbox
-  # 4) при AdGuard Home: upgrade adguardhome-go + restart
-  # 5) opkg update && opkg upgrade
+  # Порядок (Keenetic/Entware + UPX awg + dpi):
+  # 1) bin.entware.net  2) update  3) busybox/poorbox  4) AdGuard
+  # 5) awg-manager UPX auto + hold  6) update+upgrade  7) dpi-detector
+  # Нумерация этапов для пользователя: 1/6 … 6/6
   local conf="/opt/etc/opkg.conf"
   local arch_path="" has_keendev=0 cur_base="" line name url main_base bak
-  local adh=0 was_awg_upx=0
+  local adh=0
 
   echo
   info "$LBL_U"
@@ -5174,12 +5219,6 @@ opkg_upgrade_all() {
   opkg_kill_others 2>/dev/null || true
   _opkg_tmp_cleanup 2>/dev/null || true
   refresh_opkg_cache 2>/dev/null || true
-
-  # До opkg upgrade: иначе официальный ipk перезапишет сжатый бинарник
-  if is_awg_manager_upx; then
-    was_awg_upx=1
-    info "awg-manager: сейчас UPX-сборка — после upgrade вернём через awg-compressed."
-  fi
 
   # --- переключить src/gz entware/keendev на bin.entware.net ---
   if [ -f "$conf" ]; then
@@ -5238,24 +5277,24 @@ opkg_upgrade_all() {
     warn "Нет $conf — продолжаем как есть."
   fi
 
-  # --- 1. update ---
-  info "1/4  opkg update ..."
+  # --- 1/6 update ---
+  info "1/6  opkg update ..."
   if ! opkg update; then
     error "opkg update не удался."
     return 1
   fi
 
-  # --- 2. busybox + poorbox первыми (self-update / applets) ---
-  info "2/4  opkg upgrade busybox poorbox ..."
+  # --- 2/6 busybox + poorbox ---
+  info "2/6  opkg upgrade busybox poorbox ..."
   opkg upgrade busybox poorbox 2>/dev/null || {
     opkg upgrade busybox 2>/dev/null || true
     opkg upgrade poorbox 2>/dev/null || true
   }
 
-  # --- 3. AdGuard / DNS-сервис до массового upgrade ---
+  # --- 3/6 AdGuard ---
   if is_installed "adguardhome-go" || is_installed "adguardhome"; then
     adh=1
-    info "3/4  AdGuard Home: opkg upgrade adguardhome-go ..."
+    info "3/6  AdGuard Home: opkg upgrade adguardhome-go ..."
     if is_installed "adguardhome-go"; then
       opkg upgrade adguardhome-go 2>/dev/null || warn "upgrade adguardhome-go не удался (можно игнорировать)."
     fi
@@ -5264,16 +5303,34 @@ opkg_upgrade_all() {
     fi
     if [ -x /opt/etc/init.d/S99adguardhome ]; then
       info "Перезапуск S99adguardhome ..."
-      /opt/etc/init.d/S99adguardhome restart 2>/dev/null ||         warn "S99adguardhome restart не удался."
+      /opt/etc/init.d/S99adguardhome restart 2>/dev/null || \
+        warn "S99adguardhome restart не удался."
     elif [ -x /opt/etc/init.d/S99adguardhome-go ]; then
       /opt/etc/init.d/S99adguardhome-go restart 2>/dev/null || true
     fi
   else
-    info "3/4  AdGuard Home не установлен — пропуск."
+    info "3/6  AdGuard Home не установлен — пропуск."
   fi
 
-  # --- 4. полный upgrade ---
-  info "4/4  opkg update && opkg upgrade ..."
+  # --- 4/6 awg-manager UPX auto (до mass upgrade) + hold ---
+  if is_awg_manager_upx; then
+    info "4/6  awg-manager UPX — авто-обновление (awg-compressed) ..."
+    if update_awg_manager_upx_auto; then
+      info "awg-manager (UPX) готов."
+    else
+      warn "awg-manager (UPX): авто-обновление не удалось."
+    fi
+    if opkg flag hold awg-manager 2>/dev/null; then
+      info "opkg: awg-manager hold (UPX не перезаписывается mass upgrade)."
+    else
+      warn "opkg flag hold awg-manager не удался."
+    fi
+  else
+    info "4/6  awg-manager UPX не обнаружен — пропуск."
+  fi
+
+  # --- 5/6 полный upgrade ---
+  info "5/6  opkg update && opkg upgrade ..."
   if ! opkg update; then
     error "Повторный opkg update не удался."
     return 1
@@ -5284,28 +5341,20 @@ opkg_upgrade_all() {
   fi
 
   refresh_opkg_cache
-  info "Обновление пакетов завершено."
 
-  # awg-manager был UPX до upgrade — opkg мог поставить официальный ipk;
-  # возвращаем сжатую сборку (https://github.com/rndnaame/awg-compressed).
-  if [ "$was_awg_upx" = "1" ]; then
-    info "awg-manager: была UPX-сборка — обновление через awg-compressed..."
-    if menu_awg_manager; then
-      info "awg-manager (UPX) обновлён."
-    else
-      warn "Не удалось обновить awg-manager (UPX). Пункт 11 вручную."
-    fi
-  fi
-
-  # dpi-detector ставится не через opkg — обновляем отдельно, если уже установлен
+  # --- 6/6 dpi-detector ---
   if [ -x /opt/bin/dpi-detector ]; then
-    info "Найден /opt/bin/dpi-detector — обновление..."
+    info "6/6  dpi-detector — обновление ..."
     if run_remote_sh "${DPI_DETECTOR_INSTALL_URL:-https://raw.githubusercontent.com/Runnin4ik/dpi-detector/rust/install.sh}"; then
       info "dpi-detector обновлён."
     else
       warn "Не удалось обновить dpi-detector."
     fi
+  else
+    info "6/6  dpi-detector не установлен — пропуск."
   fi
+
+  info "Обновление завершено."
 }
 
 service_upx_compress() {
