@@ -10,7 +10,7 @@
 
 set -e
 
-SCRIPT_VERSION="0.10.34"
+SCRIPT_VERSION="0.10.35"
 
 REPO_URL="https://github.com/rndnaame/nfqws-menu"
 RAW_BASE="https://raw.githubusercontent.com/rndnaame/nfqws-menu/main"
@@ -4578,23 +4578,34 @@ is_awg_manager_upx() {
   for bin in /opt/sbin/awg-manager /opt/bin/awg-manager; do
     [ -x "$bin" ] || continue
     b=$(wc -c < "$bin" 2>/dev/null | tr -d ' 	
-')
+
+')
     case "$b" in ''|*[!0-9]*) continue ;; esac
     [ "$b" -gt 100000 ] && [ "$b" -lt 10485760 ] && return 0
   done
   return 1
 }
 
-# Тихое обновление UPX awg-manager (без меню 11 / без вопросов).
-# INSTALL_AWG=1 → install-compressed.sh; ask()/yes_no патчатся на default (Y для upgrade).
+# Нужно ли тянуть UPX awg-manager: remote (hoaxisr) новее local.
+awg_manager_upx_needs_update() {
+  local cur rem
+  cur=$(pkg_version "awg-manager" 2>/dev/null || true)
+  [ -n "$cur" ] || return 0
+  rem=$(upd_release_tag "hoaxisr/awg-manager" 2>/dev/null || true)
+  [ -n "$rem" ] || return 1
+  [ "$cur" = "$rem" ] && return 1
+  ver_gt "$rem" "$cur" 2>/dev/null && return 0
+  return 1
+}
+
+# Тихое обновление UPX awg-manager (без меню 11). Вывод installer → лог.
 update_awg_manager_upx_auto() {
   local url="${AWG_MANAGER_INSTALL_URL:-https://raw.githubusercontent.com/rndnaame/awg-compressed/main/install-compressed.sh}"
-  local tmp rc=0 min_bytes=8000 sb_env=0
+  local tmp rc=0 min_bytes=8000 sb_env=0 log="/tmp/nfqws-awg-upx.$$.log"
 
-  info "Скачивание awg-compressed install-compressed.sh ..."
   _kill_stale_remote_sh 2>/dev/null || true
   tmp="/tmp/nfqws-remote-$$.sh"
-  trap 'rm -f /tmp/nfqws-remote-$$.sh 2>/dev/null; _run_remote_sh_restore_traps' EXIT INT TERM
+  trap 'rm -f /tmp/nfqws-remote-$$.sh "$log" 2>/dev/null; _run_remote_sh_restore_traps' EXIT INT TERM
 
   if ! download_sh_validated "$url" "$tmp" "$min_bytes"; then
     error "Не удалось скачать install-compressed.sh"
@@ -4607,29 +4618,44 @@ update_awg_manager_upx_auto() {
   export PATH="/opt/bin:/opt/sbin:/opt/usr/bin:/bin:/sbin:/usr/bin:/usr/sbin:$PATH"
   _patch_awg_install_arch "$tmp" 2>/dev/null || true
 
-  # ask() в installer читает /dev/tty — для авто-режима всегда default (upgrade → Y)
   if grep -q 'read -r answer < /dev/tty' "$tmp" 2>/dev/null; then
     sed -i 's/read -r answer < \/dev\/tty || answer="$default"/answer="$default"/g' "$tmp" 2>/dev/null || \
       sed -i 's|read -r answer < /dev/tty || answer="$default"|answer="$default"|g' "$tmp" 2>/dev/null || true
   fi
 
-  # sing-box тоже UPX (<20M) — обновить сжатый вместе с AWG
   if [ -x /opt/etc/awg-manager/singbox/sing-box ]; then
-    _sb=$(wc -c < /opt/etc/awg-manager/singbox/sing-box 2>/dev/null | tr -d ' 	
-')
+    _sb=$(wc -c < /opt/etc/awg-manager/singbox/sing-box 2>/dev/null | tr -d ' \t\n\r')
     case "$_sb" in
       ''|*[!0-9]*) ;;
       *) [ "$_sb" -gt 100000 ] && [ "$_sb" -lt 20971520 ] && sb_env=1 ;;
     esac
   fi
 
-  info "Авто-установка UPX (INSTALL_AWG=1 INSTALL_SB=$sb_env) ..."
-  INSTALL_AWG=1 INSTALL_SB="$sb_env" sh "$tmp" </dev/null || rc=$?
-  rm -f "$tmp"
+  INSTALL_AWG=1 INSTALL_SB="$sb_env" sh "$tmp" </dev/null >"$log" 2>&1 || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    warn "awg-compressed exit $rc (хвост лога):"
+    tail -15 "$log" 2>/dev/null || true
+  fi
+  rm -f "$tmp" "$log"
   _run_remote_sh_restore_traps
   drain_stdin 2>/dev/null || true
   return "$rc"
 }
+
+# opkg update/upgrade без простыни Downloading… (лог при ошибке).
+_opkg_quiet() {
+  local log="/tmp/nfqws-opkg-quiet.$$.log" rc=0
+  if "$@" >"$log" 2>&1; then
+    rm -f "$log"
+    return 0
+  fi
+  rc=$?
+  warn "команда failed ($rc): $*"
+  tail -25 "$log" 2>/dev/null || true
+  rm -f "$log"
+  return "$rc"
+}
+
 
 
 remove_awg_manager() {
@@ -5199,13 +5225,11 @@ menu_remove() {
 # Сервисные утилиты (S / U)
 # ---------------------------------------------------------------------------
 opkg_upgrade_all() {
-  # Порядок (Keenetic/Entware + UPX awg + dpi):
   # 1) bin.entware.net  2) update  3) busybox/poorbox  4) AdGuard
-  # 5) awg-manager UPX auto + hold  6) update+upgrade  7) dpi-detector
-  # Нумерация этапов для пользователя: 1/6 … 6/6
+  # 5) awg UPX auto+hold  6) upgrade  7) dpi — UI: 1/6…6/6
   local conf="/opt/etc/opkg.conf"
   local arch_path="" has_keendev=0 cur_base="" line name url main_base bak
-  local adh=0
+  local awg_ver="" dpi_loc="" dpi_rem=""
 
   echo
   info "$LBL_U"
@@ -5220,7 +5244,6 @@ opkg_upgrade_all() {
   _opkg_tmp_cleanup 2>/dev/null || true
   refresh_opkg_cache 2>/dev/null || true
 
-  # --- переключить src/gz entware/keendev на bin.entware.net ---
   if [ -f "$conf" ]; then
     while IFS= read -r line || [ -n "$line" ]; do
       case "$line" in
@@ -5259,102 +5282,97 @@ opkg_upgrade_all() {
           else
             main_base="http://bin.entware.net"
           fi
-          warn "Сейчас: ${cur_base:-неизвестно} → переключаем на $main_base"
+          warn "Зеркало ${cur_base:-?} → $main_base"
           bak="${conf}.bak.$(date +%Y%m%d%H%M%S 2>/dev/null || echo bak)"
-          cp "$conf" "$bak" 2>/dev/null && info "Бэкап conf: $bak" || true
-          if _opkg_rewrite_conf "$conf" "$main_base" "$arch_path" "$has_keendev"; then
-            info "opkg.conf: entware → $main_base/$arch_path"
-          else
+          cp "$conf" "$bak" 2>/dev/null || true
+          if ! _opkg_rewrite_conf "$conf" "$main_base" "$arch_path" "$has_keendev"; then
             error "Не удалось переписать $conf"
             return 1
           fi
         else
-          warn "Arch-path неизвестен — conf не меняем. Проверьте src/gz вручную."
+          warn "Arch-path неизвестен — conf не меняем."
         fi
         ;;
     esac
-  else
-    warn "Нет $conf — продолжаем как есть."
   fi
 
-  # --- 1/6 update ---
   info "1/6  opkg update ..."
-  if ! opkg update; then
+  if ! _opkg_quiet opkg update; then
     error "opkg update не удался."
     return 1
   fi
+  info "    ok"
 
-  # --- 2/6 busybox + poorbox ---
-  info "2/6  opkg upgrade busybox poorbox ..."
-  opkg upgrade busybox poorbox 2>/dev/null || {
-    opkg upgrade busybox 2>/dev/null || true
-    opkg upgrade poorbox 2>/dev/null || true
+  info "2/6  busybox / poorbox ..."
+  _opkg_quiet opkg upgrade busybox poorbox || {
+    _opkg_quiet opkg upgrade busybox || true
+    _opkg_quiet opkg upgrade poorbox || true
   }
+  info "    ok"
 
-  # --- 3/6 AdGuard ---
   if is_installed "adguardhome-go" || is_installed "adguardhome"; then
-    adh=1
-    info "3/6  AdGuard Home: opkg upgrade adguardhome-go ..."
-    if is_installed "adguardhome-go"; then
-      opkg upgrade adguardhome-go 2>/dev/null || warn "upgrade adguardhome-go не удался (можно игнорировать)."
-    fi
-    if is_installed "adguardhome"; then
-      opkg upgrade adguardhome 2>/dev/null || true
-    fi
+    info "3/6  AdGuard Home ..."
+    is_installed "adguardhome-go" && _opkg_quiet opkg upgrade adguardhome-go || true
+    is_installed "adguardhome" && _opkg_quiet opkg upgrade adguardhome || true
     if [ -x /opt/etc/init.d/S99adguardhome ]; then
-      info "Перезапуск S99adguardhome ..."
-      /opt/etc/init.d/S99adguardhome restart 2>/dev/null || \
-        warn "S99adguardhome restart не удался."
+      /opt/etc/init.d/S99adguardhome restart >/dev/null 2>&1 || true
     elif [ -x /opt/etc/init.d/S99adguardhome-go ]; then
-      /opt/etc/init.d/S99adguardhome-go restart 2>/dev/null || true
+      /opt/etc/init.d/S99adguardhome-go restart >/dev/null 2>&1 || true
     fi
+    info "    ok"
   else
-    info "3/6  AdGuard Home не установлен — пропуск."
+    info "3/6  AdGuard Home — нет"
   fi
 
-  # --- 4/6 awg-manager UPX auto (до mass upgrade) + hold ---
   if is_awg_manager_upx; then
-    info "4/6  awg-manager UPX — авто-обновление (awg-compressed) ..."
-    if update_awg_manager_upx_auto; then
-      info "awg-manager (UPX) готов."
+    awg_ver=$(pkg_version "awg-manager" 2>/dev/null || echo "?")
+    if awg_manager_upx_needs_update; then
+      info "4/6  awg-manager UPX $awg_ver → обновление ..."
+      if update_awg_manager_upx_auto; then
+        info "    ok"
+      else
+        warn "    авто-обновление не удалось"
+      fi
     else
-      warn "awg-manager (UPX): авто-обновление не удалось."
+      info "4/6  awg-manager UPX $awg_ver — актуален"
     fi
-    if opkg flag hold awg-manager 2>/dev/null; then
-      info "opkg: awg-manager hold (UPX не перезаписывается mass upgrade)."
-    else
-      warn "opkg flag hold awg-manager не удался."
-    fi
+    opkg flag hold awg-manager >/dev/null 2>&1 || true
   else
-    info "4/6  awg-manager UPX не обнаружен — пропуск."
+    info "4/6  awg-manager UPX — нет"
   fi
 
-  # --- 5/6 полный upgrade ---
-  info "5/6  opkg update && opkg upgrade ..."
-  if ! opkg update; then
+  info "5/6  opkg upgrade ..."
+  if ! _opkg_quiet opkg update; then
     error "Повторный opkg update не удался."
     return 1
   fi
-  if ! opkg upgrade; then
+  if ! _opkg_quiet opkg upgrade; then
     error "opkg upgrade не удался."
     return 1
   fi
-
+  info "    ok"
   refresh_opkg_cache
 
-  # --- 6/6 dpi-detector ---
   if [ -x /opt/bin/dpi-detector ]; then
-    info "6/6  dpi-detector — обновление ..."
-    if run_remote_sh "${DPI_DETECTOR_INSTALL_URL:-https://raw.githubusercontent.com/Runnin4ik/dpi-detector/rust/install.sh}"; then
-      info "dpi-detector обновлён."
+    dpi_loc=$(dpi_detector_version 2>/dev/null || true)
+    dpi_rem=$(upd_release_tag_any "Runnin4ik/dpi-detector" 2>/dev/null || true)
+    if [ -n "$dpi_rem" ] && [ -n "$dpi_loc" ] && ver_gt "$dpi_rem" "$dpi_loc" 2>/dev/null; then
+      info "6/6  dpi-detector $dpi_loc → $dpi_rem ..."
+      if run_remote_sh "${DPI_DETECTOR_INSTALL_URL:-https://raw.githubusercontent.com/Runnin4ik/dpi-detector/rust/install.sh}" \
+           >/tmp/nfqws-dpi-upd.$$.log 2>&1; then
+        info "    ok"
+      else
+        warn "    не удалось (см. /tmp/nfqws-dpi-upd.$$.log)"
+      fi
+      rm -f /tmp/nfqws-dpi-upd.$$.log 2>/dev/null || true
     else
-      warn "Не удалось обновить dpi-detector."
+      info "6/6  dpi-detector ${dpi_loc:-ok} — актуален"
     fi
   else
-    info "6/6  dpi-detector не установлен — пропуск."
+    info "6/6  dpi-detector — нет"
   fi
 
-  info "Обновление завершено."
+  info "Готово."
 }
 
 service_upx_compress() {
