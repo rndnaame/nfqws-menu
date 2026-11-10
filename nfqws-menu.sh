@@ -10,7 +10,7 @@
 
 set -e
 
-SCRIPT_VERSION="0.10.30"
+SCRIPT_VERSION="0.10.32"
 
 REPO_URL="https://github.com/rndnaame/nfqws-menu"
 RAW_BASE="https://raw.githubusercontent.com/rndnaame/nfqws-menu/main"
@@ -4571,6 +4571,20 @@ is_awg_manager_installed() {
   is_installed "awg-manager" || [ -d /opt/etc/awg-manager ]
 }
 
+# UPX-сборка awg-manager: бинарник ≪ 10M (официальный ~26M). Логика как в awg-compressed.
+is_awg_manager_upx() {
+  local bin b
+  is_awg_manager_installed || return 1
+  for bin in /opt/sbin/awg-manager /opt/bin/awg-manager; do
+    [ -x "$bin" ] || continue
+    b=$(wc -c < "$bin" 2>/dev/null | tr -d ' \t\n\r')
+    case "$b" in ''|*[!0-9]*) continue ;; esac
+    # нижняя граница: мусор/заглушка; верхняя: порог UPX из install-compressed.sh
+    [ "$b" -gt 100000 ] && [ "$b" -lt 10485760 ] && return 0
+  done
+  return 1
+}
+
 remove_awg_manager() {
   if is_installed "awg-manager"; then
     opkg remove awg-manager 2>/dev/null || opkg remove --autoremove awg-manager 2>/dev/null || true
@@ -5146,7 +5160,7 @@ opkg_upgrade_all() {
   # 5) opkg update && opkg upgrade
   local conf="/opt/etc/opkg.conf"
   local arch_path="" has_keendev=0 cur_base="" line name url main_base bak
-  local adh=0
+  local adh=0 was_awg_upx=0
 
   echo
   info "$LBL_U"
@@ -5161,15 +5175,19 @@ opkg_upgrade_all() {
   _opkg_tmp_cleanup 2>/dev/null || true
   refresh_opkg_cache 2>/dev/null || true
 
+  # До opkg upgrade: иначе официальный ipk перезапишет сжатый бинарник
+  if is_awg_manager_upx; then
+    was_awg_upx=1
+    info "awg-manager: сейчас UPX-сборка — после upgrade вернём через awg-compressed."
+  fi
+
   # --- переключить src/gz entware/keendev на bin.entware.net ---
   if [ -f "$conf" ]; then
     while IFS= read -r line || [ -n "$line" ]; do
       case "$line" in
         src/gz\ *)
-          name=$(printf '%s
-' "$line" | awk '{print $2}')
-          url=$(printf '%s
-' "$line" | awk '{print $3}')
+          name=$(printf '%s\n' "$line" | awk '{print $2}')
+          url=$(printf '%s\n' "$line" | awk '{print $3}')
           [ -n "$url" ] || continue
           case "$name" in
             keendev)
@@ -5267,6 +5285,17 @@ opkg_upgrade_all() {
 
   refresh_opkg_cache
   info "Обновление пакетов завершено."
+
+  # awg-manager был UPX до upgrade — opkg мог поставить официальный ipk;
+  # возвращаем сжатую сборку (https://github.com/rndnaame/awg-compressed).
+  if [ "$was_awg_upx" = "1" ]; then
+    info "awg-manager: была UPX-сборка — обновление через awg-compressed..."
+    if menu_awg_manager; then
+      info "awg-manager (UPX) обновлён."
+    else
+      warn "Не удалось обновить awg-manager (UPX). Пункт 11 вручную."
+    fi
+  fi
 
   # dpi-detector ставится не через opkg — обновляем отдельно, если уже установлен
   if [ -x /opt/bin/dpi-detector ]; then
