@@ -10,7 +10,7 @@
 
 set -e
 
-SCRIPT_VERSION="0.10.29"
+SCRIPT_VERSION="0.10.30"
 
 REPO_URL="https://github.com/rndnaame/nfqws-menu"
 RAW_BASE="https://raw.githubusercontent.com/rndnaame/nfqws-menu/main"
@@ -5138,17 +5138,133 @@ menu_remove() {
 # Сервисные утилиты (S / U)
 # ---------------------------------------------------------------------------
 opkg_upgrade_all() {
+  # Порядок по рекомендации Entware/Keenetic forum:
+  # 1) основной репо bin.entware.net (не зеркало)
+  # 2) opkg update
+  # 3) opkg upgrade busybox poorbox
+  # 4) при AdGuard Home: upgrade adguardhome-go + restart
+  # 5) opkg update && opkg upgrade
+  local conf="/opt/etc/opkg.conf"
+  local arch_path="" has_keendev=0 cur_base="" line name url main_base bak
+  local adh=0
+
   echo
   info "$LBL_U"
-  info "opkg update && opkg upgrade ..."
+  warn "Обновление Entware — на свой страх и риск. Сделайте резервную копию."
+  warn "Нужен основной репозиторий: bin.entware.net (не зеркало)."
+  if ! confirm_yes "Продолжить?"; then
+    info "Отменено."
+    return 0
+  fi
+
+  opkg_kill_others 2>/dev/null || true
+  _opkg_tmp_cleanup 2>/dev/null || true
+  refresh_opkg_cache 2>/dev/null || true
+
+  # --- переключить src/gz entware/keendev на bin.entware.net ---
+  if [ -f "$conf" ]; then
+    while IFS= read -r line || [ -n "$line" ]; do
+      case "$line" in
+        src/gz\ *)
+          name=$(printf '%s
+' "$line" | awk '{print $2}')
+          url=$(printf '%s
+' "$line" | awk '{print $3}')
+          [ -n "$url" ] || continue
+          case "$name" in
+            keendev)
+              has_keendev=1
+              if ! _opkg_arch_path_ok "$arch_path"; then
+                arch_path=$(_opkg_arch_path_from_url "$url")
+              fi
+              ;;
+            entware)
+              cur_base=$(_opkg_base_from_url "$url")
+              if ! _opkg_arch_path_ok "$arch_path"; then
+                arch_path=$(_opkg_arch_path_from_url "$url")
+              fi
+              ;;
+          esac
+          ;;
+      esac
+    done < "$conf"
+    if ! _opkg_arch_path_ok "$arch_path"; then
+      arch_path=$(_opkg_arch_path_fallback)
+    fi
+    case "$cur_base" in
+      *bin.entware.net*)
+        info "Репозиторий: bin.entware.net ($arch_path)"
+        ;;
+      *)
+        if _opkg_arch_path_ok "$arch_path"; then
+          if _opkg_has_https 2>/dev/null; then
+            main_base="https://bin.entware.net"
+          else
+            main_base="http://bin.entware.net"
+          fi
+          warn "Сейчас: ${cur_base:-неизвестно} → переключаем на $main_base"
+          bak="${conf}.bak.$(date +%Y%m%d%H%M%S 2>/dev/null || echo bak)"
+          cp "$conf" "$bak" 2>/dev/null && info "Бэкап conf: $bak" || true
+          if _opkg_rewrite_conf "$conf" "$main_base" "$arch_path" "$has_keendev"; then
+            info "opkg.conf: entware → $main_base/$arch_path"
+          else
+            error "Не удалось переписать $conf"
+            return 1
+          fi
+        else
+          warn "Arch-path неизвестен — conf не меняем. Проверьте src/gz вручную."
+        fi
+        ;;
+    esac
+  else
+    warn "Нет $conf — продолжаем как есть."
+  fi
+
+  # --- 1. update ---
+  info "1/4  opkg update ..."
   if ! opkg update; then
     error "opkg update не удался."
+    return 1
+  fi
+
+  # --- 2. busybox + poorbox первыми (self-update / applets) ---
+  info "2/4  opkg upgrade busybox poorbox ..."
+  opkg upgrade busybox poorbox 2>/dev/null || {
+    opkg upgrade busybox 2>/dev/null || true
+    opkg upgrade poorbox 2>/dev/null || true
+  }
+
+  # --- 3. AdGuard / DNS-сервис до массового upgrade ---
+  if is_installed "adguardhome-go" || is_installed "adguardhome"; then
+    adh=1
+    info "3/4  AdGuard Home: opkg upgrade adguardhome-go ..."
+    if is_installed "adguardhome-go"; then
+      opkg upgrade adguardhome-go 2>/dev/null || warn "upgrade adguardhome-go не удался (можно игнорировать)."
+    fi
+    if is_installed "adguardhome"; then
+      opkg upgrade adguardhome 2>/dev/null || true
+    fi
+    if [ -x /opt/etc/init.d/S99adguardhome ]; then
+      info "Перезапуск S99adguardhome ..."
+      /opt/etc/init.d/S99adguardhome restart 2>/dev/null ||         warn "S99adguardhome restart не удался."
+    elif [ -x /opt/etc/init.d/S99adguardhome-go ]; then
+      /opt/etc/init.d/S99adguardhome-go restart 2>/dev/null || true
+    fi
+  else
+    info "3/4  AdGuard Home не установлен — пропуск."
+  fi
+
+  # --- 4. полный upgrade ---
+  info "4/4  opkg update && opkg upgrade ..."
+  if ! opkg update; then
+    error "Повторный opkg update не удался."
     return 1
   fi
   if ! opkg upgrade; then
     error "opkg upgrade не удался."
     return 1
   fi
+
   refresh_opkg_cache
   info "Обновление пакетов завершено."
 
