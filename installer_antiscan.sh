@@ -345,9 +345,10 @@ opkg_refresh() {
   elif [ "$had" = "0" ] && [ -n "$list" ] && [ -s "$list" ]; then
     fresh=1
   fi
-  # Без подтверждённо нового индекса успехом считается только opkg update с кодом 0
-  # (и только если прежний индекс не пропал после update).
-  if [ "$fresh" = "0" ] && { [ "$rc" -ne 0 ] || [ "$moved" = "1" ]; }; then
+  # Без подтверждённо нового индекса успех — только opkg update с кодом 0 и только
+  # если прежнего индекса не было (иначе его нельзя отличить от устаревшего).
+  if [ "$fresh" = "0" ] && { [ "$rc" -ne 0 ] || [ "$had" = "1" ]; }; then
+    [ "$had" = "1" ] && [ "$moved" = "0" ] && error "Не удалось отложить прежний индекс $list — свежесть не проверить."
     error "Индекс репозитория Antiscan не обновлён (${FEED_URL:-?}), opkg update код $rc. Сеть / DNS / HTTPS?"
     [ "$had" = "1" ] && warn "Прежний индекс из кэша opkg не используется: он может быть устаревшим."
     return 1
@@ -1017,16 +1018,60 @@ applied_get() {
 }
 
 PROT_MISSING=""
+PROT_CHAIN_BAD=0
+
+# $1 вывод iptables -S  $2 ERE правила  $3 метка для отчёта
+_need_rule() {
+  printf '%s\n' "$1" | grep -Eq -e "$2" && return 0
+  PROT_MISSING="$PROT_MISSING $3"
+  PROT_CHAIN_BAD=1
+}
+
+# Содержимое цепочки (iptables -S, только чтение). add_rules upstream заполняет
+# ANTISCAN / ANTISCAN_HONEYPOT только при создании цепочки, поэтому оставшаяся
+# пустая цепочка с верными переходами не защищает и не чинится update_rules.
+# $1 цепочка  $2 ENABLE_IPS_BAN  $3 ENABLE_HONEYPOT  $4 CUSTOM_LISTS_BLOCK_MODE
+chain_rules_check() {
+  local c="$1" dump
+  if ! dump=$(iptables -w -t filter -S "$c" 2>/dev/null); then
+    PROT_MISSING="$PROT_MISSING $c:-S"; PROT_CHAIN_BAD=1; return
+  fi
+  if [ "$c" = "ANTISCAN_HONEYPOT" ]; then
+    _need_rule "$dump" '--match-set ascn_honeypot src -j DROP' "$c:DROP-ascn_honeypot"
+    _need_rule "$dump" '-j SET --add-set ascn_honeypot src' "$c:SET-ascn_honeypot"
+  else
+    if [ "$2" = "1" ]; then
+      _need_rule "$dump" '--match-set ascn_subnets src -j DROP' "$c:DROP-ascn_subnets"
+      _need_rule "$dump" '--match-set ascn_ips src -j DROP' "$c:DROP-ascn_ips"
+      _need_rule "$dump" '-m connlimit .*-j SET --add-set ascn_ips src' "$c:connlimit"
+      _need_rule "$dump" '-m recent --update .*-j SET --add-set ascn_ips src' "$c:recent-update"
+      _need_rule "$dump" '-m recent --set .*--name scanners' "$c:recent-set"
+    fi
+    [ "$3" = "1" ] && _need_rule "$dump" '--match-set ascn_honeypot src -j DROP' "$c:DROP-ascn_honeypot"
+    case "$4" in
+      blacklist) _need_rule "$dump" '--match-set ascn_custom_blacklist src -j DROP' "$c:DROP-blacklist" ;;
+      whitelist) _need_rule "$dump" '! --match-set ascn_custom_whitelist src -j DROP' "$c:DROP-whitelist" ;;
+    esac
+  fi
+  # Безусловный RETURN допустим только последним правилом
+  if printf '%s\n' "$dump" | awk -v c="$c" '$0 == "-A " c " -j RETURN" { r = 1; next } r && /^-A / { bad = 1 } END { exit !bad }'; then
+    PROT_MISSING="$PROT_MISSING $c:RETURN-перед-правилами"; PROT_CHAIN_BAD=1
+  fi
+}
+
 # $1 интерфейсы  $2 PORTS  $3 PORTS_FORWARDED  $4 ENABLE_HONEYPOT  $5 HONEYPOT_PORTS
+# $6 ENABLE_IPS_BAN  $7 CUSTOM_LISTS_BLOCK_MODE
 protection_check() {
   local i
   PROT_MISSING=""
+  PROT_CHAIN_BAD=0
   if ! command -v iptables >/dev/null 2>&1; then PROT_MISSING=" (нет iptables)"; return 1; fi
   is_running || PROT_MISSING=" флаг-$ASCN_RUN_FILE"
   set -f
   if ! iptables -w -t filter -L ANTISCAN -n >/dev/null 2>&1; then
     PROT_MISSING="$PROT_MISSING цепочка-ANTISCAN"
   else
+    chain_rules_check ANTISCAN "$6" "$4" "$7"
     for i in $1; do
       if [ -n "$2" ] && ! iptables -w -t filter -C INPUT -i "$i" -p tcp -m multiport --dports "$2" -j ANTISCAN >/dev/null 2>&1; then
         PROT_MISSING="$PROT_MISSING INPUT/$i"
@@ -1040,6 +1085,7 @@ protection_check() {
     if ! iptables -w -t filter -L ANTISCAN_HONEYPOT -n >/dev/null 2>&1; then
       PROT_MISSING="$PROT_MISSING цепочка-ANTISCAN_HONEYPOT"
     else
+      chain_rules_check ANTISCAN_HONEYPOT
       for i in $1; do
         iptables -w -t filter -C INPUT -i "$i" -p tcp -m multiport --dports "$5" -j ANTISCAN_HONEYPOT >/dev/null 2>&1 ||
           PROT_MISSING="$PROT_MISSING HONEYPOT/$i"
@@ -1051,8 +1097,10 @@ protection_check() {
 }
 
 protection_applied() {
+  local ips
+  ips=$(applied_get ENABLE_IPS_BAN)
   protection_check "$(applied_get ISP_INTERFACES)" "$(applied_get PORTS)" "$(applied_get PORTS_FORWARDED)" \
-    "$(applied_get ENABLE_HONEYPOT)" "$(applied_get HONEYPOT_PORTS)"
+    "$(applied_get ENABLE_HONEYPOT)" "$(applied_get HONEYPOT_PORTS)" "${ips:-1}" "$(applied_get CUSTOM_LISTS_BLOCK_MODE)"
 }
 
 applied_summary() {
@@ -1126,7 +1174,18 @@ recover_protection() {
     fi
     rm -f "$ASCN_LOCK_FILE"
   fi
-  if is_running && confirm "Восстановить правила: antiscan update_rules (добавляет только недостающие, блокировки сохраняются)?" y; then
+  if [ "$PROT_CHAIN_BAD" = "1" ]; then
+    warn "Цепочка Antiscan есть, но без защитных правил: update_rules её не заполняет (только при создании)."
+    if is_running && confirm "Перезапустить Antiscan с текущим ascn.conf (цепочки пересоздаются)?" y; then
+      warn_bans_dropped
+      run_tty "$ASCN_INIT" restart
+      if [ ! -f "$ASCN_LOCK_FILE" ] && protection_applied; then
+        info "Antiscan перезапущен, правила на месте: $(applied_summary)"
+        return 0
+      fi
+      warn "После перезапуска защита неполная, не найдено:$PROT_MISSING"
+    fi
+  elif is_running && confirm "Восстановить правила: antiscan update_rules (добавляет только недостающие, блокировки сохраняются)?" y; then
     "$ASCN_INIT" update_rules
     if protection_applied; then
       info "Правила Antiscan восстановлены для $(applied_summary)"
@@ -1148,6 +1207,7 @@ recover_protection() {
     fi
   fi
   error "Защита Antiscan не восстановлена. Проверьте: antiscan status; iptables -w -t filter -S | grep ANTISCAN"
+  [ "$PROT_CHAIN_BAD" = "1" ] && echo "  Цепочка не удаляется при stop, пока на неё ссылаются переходы прежней конфигурации (-j ANTISCAN)."
   echo "  После перезагрузки роутера Antiscan запустится с текущим ascn.conf."
   return 1
 }

@@ -154,6 +154,8 @@ S="$STUB_STATE"
 case "$*" in
   "-w -t filter -L ANTISCAN -n") [ -f "$S/chain" ] || [ -f "$S/chain_left" ]; exit $? ;;
   "-w -t filter -L ANTISCAN_HONEYPOT -n") [ -f "$S/chain_hp" ]; exit $? ;;
+  "-w -t filter -S ANTISCAN") [ -f "$S/chain" ] || exit 1; echo "-N ANTISCAN"; cat "$S/chain"; exit 0 ;;
+  "-w -t filter -S ANTISCAN_HONEYPOT") [ -f "$S/chain_hp" ] || exit 1; echo "-N ANTISCAN_HONEYPOT"; cat "$S/chain_hp"; exit 0 ;;
   "-w -t filter -C "*)
     # -w -t filter -C CHAIN -i IF -p tcp -m multiport --dports P -j TARGET
     set -f; set -- $*
@@ -178,6 +180,14 @@ EOF
   printf '#!/bin/sh\nexit 0\n' > "$B/netstat"
   printf '#!/bin/sh\necho 0\n' > "$B/id"
   printf '#!/bin/sh\nexit 0\n' > "$B/clear"
+  # mv: отказ только для отложенного индекса opkg (state/mv_fail)
+  cat > "$B/mv" <<'MVEOF'
+#!/bin/sh
+if [ -f "$STUB_STATE/mv_fail" ]; then
+  for a in "$@"; do case "$a" in *ascn-prev*) echo "mv: cannot rename" >&2; exit 1 ;; esac; done
+fi
+exec /bin/mv "$@"
+MVEOF
   chmod +x "$B"/*
 
   # Шаблоны файлов пакета
@@ -191,10 +201,40 @@ S="$STUB_STATE"
 echo "ascn $*" >> "$STUB_LOG/ascn.log"
 cget() { awk -v k="$1" 'index($0, k "=\"") == 1 { v = substr($0, length(k) + 3); sub(/"$/, "", v); r = v } END { print r }' "$2"; }
 eff() { if [ -f "$ASCN_TEMP_CONF" ]; then cget "$1" "$ASCN_TEMP_CONF"; else cget "$1" "$ASCN_CONF"; fi; }
-write_temp() { grep -E '^(ISP_INTERFACES|PORTS|PORTS_FORWARDED|ENABLE_HONEYPOT|HONEYPOT_PORTS)=' "$ASCN_CONF" > "$ASCN_TEMP_CONF"; }
+write_temp() { grep -E '^(ISP_INTERFACES|PORTS|PORTS_FORWARDED|ENABLE_HONEYPOT|HONEYPOT_PORTS|ENABLE_IPS_BAN|CUSTOM_LISTS_BLOCK_MODE)=' "$ASCN_CONF" > "$ASCN_TEMP_CONF"; }
+ips_on() { v=$(eff ENABLE_IPS_BAN); [ "${v:-1}" = 1 ]; }
+# Содержимое как у add_rules upstream (вывод iptables -S). Ошибки _iptables -A
+# upstream не проверяет: fill_no_drop / fill_partial — частично созданная цепочка.
+fill_chain() {
+  {
+    [ "$(eff ENABLE_HONEYPOT)" = 1 ] && echo "-A ANTISCAN -m set --match-set ascn_honeypot src -j DROP"
+    if ips_on; then
+      if [ ! -f "$S/fill_no_drop" ]; then
+        echo "-A ANTISCAN -m set --match-set ascn_subnets src -j DROP"
+        echo "-A ANTISCAN -m set --match-set ascn_ips src -j DROP"
+      fi
+      echo "-A ANTISCAN -j SET --add-set ascn_candidates src"
+      if [ ! -f "$S/fill_partial" ]; then
+        echo "-A ANTISCAN -m connlimit --connlimit-above 20 --connlimit-mask 32 --connlimit-saddr -j SET --add-set ascn_ips src"
+        echo "-A ANTISCAN -m conntrack --ctstate NEW -m recent --update --seconds 30 --hitcount 15 --name scanners --mask 255.255.255.255 --rsource -j SET --add-set ascn_ips src"
+        echo "-A ANTISCAN -m conntrack --ctstate NEW -m recent --set --name scanners --mask 255.255.255.255 --rsource"
+      fi
+    fi
+    echo "-A ANTISCAN -j RETURN"
+  } > "$S/chain"
+}
+fill_hp() {
+  : > "$S/chain_hp"
+  [ -f "$S/hp_fill_empty" ] && return
+  echo "-A ANTISCAN_HONEYPOT -m set --match-set ascn_honeypot src -j DROP" >> "$S/chain_hp"
+  ips_on && echo "-A ANTISCAN_HONEYPOT -m set --match-set ascn_ips src -j DROP" >> "$S/chain_hp"
+  echo "-A ANTISCAN_HONEYPOT -j SET --add-set ascn_honeypot src" >> "$S/chain_hp"
+}
+# Как upstream: цепочка заполняется только при создании, переходы — всегда
 add_rules() {
-  touch "$S/chain"; p=$(eff PORTS); f=$(eff PORTS_FORWARDED); hp=$(eff HONEYPOT_PORTS)
-  [ "$(eff ENABLE_HONEYPOT)" = 1 ] && touch "$S/chain_hp"
+  p=$(eff PORTS); f=$(eff PORTS_FORWARDED); hp=$(eff HONEYPOT_PORTS)
+  [ -f "$S/chain" ] || fill_chain
+  if [ "$(eff ENABLE_HONEYPOT)" = 1 ] && [ ! -f "$S/chain_hp" ]; then fill_hp; fi
   for i in $(eff ISP_INTERFACES); do
     [ -n "$p" ] && echo "INPUT $i $p ANTISCAN" >> "$S/rules"
     [ -n "$f" ] && echo "FORWARD $i $f ANTISCAN" >> "$S/rules"
@@ -202,7 +242,26 @@ add_rules() {
   done
   sort -u "$S/rules" -o "$S/rules" 2>/dev/null || true
 }
-remove_rules() { rm -f "$S/chain" "$S/chain_hp" "$S/rules"; }
+del_jump() { [ -f "$S/rules" ] || return 0; grep -vxF "$1" "$S/rules" > "$S/rules.n"; mv "$S/rules.n" "$S/rules"; }
+# Как upstream: переходы удаляются только для текущей конфигурации, затем -F и -X;
+# -X не проходит, пока на цепочку ссылается переход (цепочка остаётся пустой).
+remove_rules() {
+  p=$(eff PORTS); f=$(eff PORTS_FORWARDED); hp=$(eff HONEYPOT_PORTS)
+  if [ -f "$S/chain" ]; then
+    for i in $(eff ISP_INTERFACES); do
+      [ -n "$p" ] && del_jump "INPUT $i $p ANTISCAN"
+      [ -n "$f" ] && del_jump "FORWARD $i $f ANTISCAN"
+    done
+    : > "$S/chain"
+    [ -f "$S/interrupt_after_flush" ] && { rm -f "$S/interrupt_after_flush"; exit 143; }  # однократно
+    grep -q ' ANTISCAN$' "$S/rules" 2>/dev/null || rm -f "$S/chain"
+  fi
+  if [ "$(eff ENABLE_HONEYPOT)" = 1 ] && [ -f "$S/chain_hp" ]; then
+    for i in $(eff ISP_INTERFACES); do del_jump "INPUT $i $hp ANTISCAN_HONEYPOT"; done
+    : > "$S/chain_hp"
+    grep -q ' ANTISCAN_HONEYPOT$' "$S/rules" 2>/dev/null || rm -f "$S/chain_hp"
+  fi
+}
 locked() { [ -f "$ASCN_LOCK_FILE" ] && { echo "Идёт обновление конфигурации" >&2; exit 2; }; }
 case "$1" in
   start) [ -f "$ASCN_RUN_FILE" ] && exit 1; locked; write_temp; add_rules; touch "$ASCN_RUN_FILE"; echo "Antiscan запущен" ;;
@@ -296,7 +355,7 @@ opkg_count() { grep -c -- "$1" "$T/log/opkg.log"; }
 conf() { awk -v k="$1" 'index($0, k "=\"") == 1 { v = substr($0, length(k) + 3); sub(/"$/, "", v); r = v } END { print r }' "$ASCN_CONF"; }
 
 # Firewall: установщик сам может только читать (iptables -L / -C) — без ipset
-FW_RO='^iptables -w -t filter (-L ANTISCAN(_HONEYPOT)? -n|-C (INPUT|FORWARD) -i [^ ]+ -p tcp -m multiport --dports [0-9,:]+ -j ANTISCAN(_HONEYPOT)?)$'
+FW_RO='^iptables -w -t filter (-L ANTISCAN(_HONEYPOT)? -n|-S ANTISCAN(_HONEYPOT)?|-C (INPUT|FORWARD) -i [^ ]+ -p tcp -m multiport --dports [0-9,:]+ -j ANTISCAN(_HONEYPOT)?)$'
 check_firewall_readonly() {
   if grep -Ev "$FW_RO" "$T/log/fw.log" | grep -q .; then
     fail "посторонние firewall-команды: $(grep -Ev "$FW_RO" "$T/log/fw.log" | head -n 3 | tr '\n' ';')"
@@ -497,6 +556,7 @@ run 'ppp0\n22,8443\n\ny\n' do_configure
 check '[ "$rc" -eq 0 ] && out_has "правила Antiscan в iptables на месте"' "успешный reload не подтверждён: rc=$rc"
 check 'rules_for "INPUT ppp0 22,8443 ANTISCAN" && rules_for "FORWARD ppp0 22,80,443 ANTISCAN"' "правила не по новой конфигурации"
 check 'grep -q -- "-C INPUT -i ppp0 -p tcp -m multiport --dports 22,8443 -j ANTISCAN" "$T/log/fw.log"' "состояние не проверено через iptables -C"
+check 'grep -q -- "-S ANTISCAN$" "$T/log/fw.log"' "содержимое цепочки не проверено"
 check_firewall_readonly
 
 # reload отклонён проверкой конфигурации (exit 3): правила прежние, ascn.conf возвращается
@@ -577,6 +637,87 @@ touch "$T/state/reload_norules"
 run 'ppp0\n\n\ny\nn\nn\n' do_configure
 check '[ "$rc" -ne 0 ] && out_has "не восстановлена"' "отказ от восстановления: rc=$rc"
 check_firewall_readonly
+
+# Пустая цепочка с верными переходами: -X не прошёл из-за перехода прежней
+# конфигурации, add_rules цепочку не заполняет — успехом считаться не должно
+setup chain_empty_stale_jump
+preinstall
+mkdir -p "$T/sysnet/ppp0"
+start_ascn
+echo "INPUT eth9 22 ANTISCAN" >> "$T/state/rules"
+run 'ppp0\n\n\ny\ny\ny\n' do_configure
+check '[ -f "$T/state/chain" ] && [ ! -s "$T/state/chain" ] && rules_for "INPUT eth3 22,80,443 ANTISCAN"' "модель: пустая цепочка не воспроизведена"
+check '[ "$rc" -ne 0 ] && out_has "DROP-ascn_ips" && out_has "без защитных правил"' "пустая цепочка не обнаружена: rc=$rc"
+check '! out_has "на месте" && ! out_has "Правила Antiscan восстановлены"' "ложное сообщение о восстановлении"
+check '! grep -q "^ascn update_rules" "$T/log/ascn.log" && out_has "ссылаются переходы"' "update_rules для пустой цепочки / нет диагностики"
+check_firewall_readonly
+
+# Прерван между -F и -X: цепочка пустая, lock остался; restart пересоздаёт её
+setup chain_empty_restart_fixes
+preinstall
+mkdir -p "$T/sysnet/ppp0"
+start_ascn
+touch "$T/state/interrupt_after_flush"
+run 'ppp0\n\n\ny\ny\ny\n' do_configure
+check '[ ! -f "$ASCN_LOCK_FILE" ] && grep -q "^ascn restart" "$T/log/ascn.log"' "restart не выполнен"
+check '[ "$rc" -eq 0 ] && grep -q -- "--match-set ascn_ips src -j DROP" "$T/state/chain" && rules_for "INPUT ppp0 22,80,443 ANTISCAN"' "цепочка не пересоздана: rc=$rc"
+check_firewall_readonly
+
+# Нет DROP-правил (ошибки _iptables -A upstream не проверяет)
+setup chain_no_drop
+preinstall
+mkdir -p "$T/sysnet/ppp0"
+start_ascn
+touch "$T/state/fill_no_drop"
+run 'ppp0\n\n\ny\ny\ny\n' do_configure
+check '[ "$rc" -ne 0 ] && out_has "DROP-ascn_ips" && out_has "DROP-ascn_subnets" && ! out_has "на месте"' "отсутствие DROP не обнаружено: rc=$rc"
+check_firewall_readonly
+
+# Частично созданная цепочка: DROP есть, правил наполнения ascn_ips нет
+setup chain_partial
+preinstall
+mkdir -p "$T/sysnet/ppp0"
+start_ascn
+touch "$T/state/fill_partial"
+run 'ppp0\n\n\ny\ny\ny\n' do_configure
+check '[ "$rc" -ne 0 ] && out_has "connlimit" && out_has "recent-update" && ! out_has "DROP-ascn_ips" && ! out_has "на месте"' "частичная цепочка не обнаружена: rc=$rc"
+
+# Honeypot: норма и пустая ANTISCAN_HONEYPOT
+setup honeypot_ok
+preinstall
+printf 'ISP_INTERFACES="eth3"\nPORTS="22"\nPORTS_FORWARDED=""\nENABLE_HONEYPOT="1"\nHONEYPOT_PORTS="23"\nENABLE_IPS_BAN="1"\n' > "$ASCN_CONF"
+mkdir -p "$T/sysnet/ppp0"
+start_ascn
+run 'ppp0\n\n\ny\n' do_configure
+check '[ "$rc" -eq 0 ] && out_has "на месте" && grep -q -- "-S ANTISCAN_HONEYPOT$" "$T/log/fw.log"' "honeypot: rc=$rc"
+
+setup honeypot_chain_empty
+preinstall
+printf 'ISP_INTERFACES="eth3"\nPORTS="22"\nPORTS_FORWARDED=""\nENABLE_HONEYPOT="1"\nHONEYPOT_PORTS="23"\nENABLE_IPS_BAN="1"\n' > "$ASCN_CONF"
+mkdir -p "$T/sysnet/ppp0"
+start_ascn
+touch "$T/state/hp_fill_empty"
+rm -f "$T/state/chain_hp"; "$ASCN_INIT" update_rules >/dev/null 2>&1
+run 'ppp0\n\n\ny\ny\ny\n' do_configure
+check '[ "$rc" -ne 0 ] && out_has "ANTISCAN_HONEYPOT:DROP-ascn_honeypot" && out_has "ANTISCAN_HONEYPOT:SET-ascn_honeypot" && ! out_has "на месте"' "пустая honeypot-цепочка не обнаружена: rc=$rc"
+check_firewall_readonly
+
+# IPS выключен: цепочка только с RETURN — не ошибка
+setup ips_disabled_ok
+preinstall
+printf 'ISP_INTERFACES="eth3"\nPORTS="22"\nPORTS_FORWARDED=""\nENABLE_IPS_BAN="0"\nCUSTOM_LISTS_BLOCK_MODE="0"\n' > "$ASCN_CONF"
+mkdir -p "$T/sysnet/ppp0"
+start_ascn
+run 'ppp0\n\n\ny\n' do_configure
+check '[ "$rc" -eq 0 ] && out_has "на месте"' "ложная тревога при ENABLE_IPS_BAN=0: rc=$rc"
+
+# Прежний индекс не удалось отложить — свежесть не подтверждена, не принимаем
+setup cached_index_unmovable
+preinstall 1.10.5
+mkdir -p "$T/opt/var/opkg-lists"; echo 1.10.5 > "$T/opt/var/opkg-lists/antiscan"
+touch "$T/state/mv_fail"
+run 'y\n' do_update
+check '[ "$rc" -ne 0 ] && out_has "Не удалось отложить" && ! out_has "актуальная версия" && ! opkg_has "opkg upgrade"' "неперемещённый индекс принят: rc=$rc"
 
 # Устаревший индекс в кэше opkg при недоступном репозитории
 setup stale_index_update
