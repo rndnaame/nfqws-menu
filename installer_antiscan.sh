@@ -33,6 +33,10 @@ ASCN_CONF="${ASCN_CONF:-$ASCN_DIR/ascn.conf}"
 ASCN_INIT="${ASCN_INIT:-/opt/etc/init.d/S99ascn}"
 ASCN_HOOK="${ASCN_HOOK:-/opt/etc/ndm/netfilter.d/099-ascn.sh}"
 ASCN_RUN_FILE="${ASCN_RUN_FILE:-/tmp/ascn.run}"
+ASCN_LOCK_FILE="${ASCN_LOCK_FILE:-/tmp/ascn.lock}"      # reload_config upstream
+ASCN_TEMP_CONF="${ASCN_TEMP_CONF:-/tmp/ascn.conf.tmp}"  # применённая конфигурация (write_temp_config)
+ASCN_LOCK_WAIT="${ASCN_LOCK_WAIT:-5}"
+PROC_DIR="${PROC_DIR:-/proc}"
 OPKG_CONF_DIR="${OPKG_CONF_DIR:-/opt/etc/opkg}"
 OPKG_MAIN_CONF="${OPKG_MAIN_CONF:-/opt/etc/opkg.conf}"
 ASCN_FEED_CONF="$OPKG_CONF_DIR/antiscan.conf"
@@ -203,10 +207,13 @@ upgrade_available() {
 # Репозиторий Antiscan в opkg
 # ---------------------------------------------------------------------------
 FEED_FILE=""
+FEED_NAME=""
 FEED_URL=""
 FEED_CREATED=0
+FEED_APPENDED=0
+FEED_ORIG=""
 
-# Первая строка src с репозиторием Antiscan → «файл url». 1 = не найдено.
+# Первая строка src с репозиторием Antiscan → «файл имя url». 1 = не найдено.
 feed_find() {
   local f res
   for f in "$OPKG_MAIN_CONF" "$OPKG_CONF_DIR"/*.conf; do
@@ -214,7 +221,7 @@ feed_find() {
     res=$(awk -v p="$FEED_URL_PRIMARY" -v m="$FEED_URL_MIRROR" '
       $1 ~ /^src/ {
         u = $3; sub(/\/+$/, "", u)
-        if ($2 == "antiscan" || u == p || u == m) { print u; exit }
+        if ($2 == "antiscan" || u == p || u == m) { print $2 " " u; exit }
       }' "$f" 2>/dev/null)
     if [ -n "$res" ]; then
       printf '%s %s\n' "$f" "$res"
@@ -236,16 +243,26 @@ feed_is_official_file() {
 
 ensure_feed() {
   local found
+  FEED_CREATED=0; FEED_APPENDED=0; FEED_ORIG=""
   if found=$(feed_find); then
-    FEED_FILE=${found%% *}
+    FEED_FILE=${found%% *}; found=${found#* }
+    FEED_NAME=${found%% *}
     FEED_URL=${found#* }
     info "Репозиторий Antiscan уже настроен: $FEED_URL ($FEED_FILE) — оставляем как есть."
     return 0
   fi
   mkdir -p "$OPKG_CONF_DIR" || { error "Не удалось создать $OPKG_CONF_DIR"; return 1; }
   if [ -e "$ASCN_FEED_CONF" ]; then
-    # Чужой файл с тем же именем: только дописываем строку, не перезаписываем
-    printf '\nsrc/gz antiscan %s\n' "$1" >> "$ASCN_FEED_CONF" || return 1
+    # Чужой файл с тем же именем: только дописываем строку, не перезаписываем.
+    # Копия исходного содержимого — для точного отката, если установка не удастся.
+    FEED_ORIG=$(mktemp "${TMPDIR:-/tmp}/ascn-feed.XXXXXX") || FEED_ORIG=""
+    if [ -z "$FEED_ORIG" ] || ! cp -p "$ASCN_FEED_CONF" "$FEED_ORIG"; then
+      _feed_tx_done
+      error "Не удалось сохранить копию $ASCN_FEED_CONF"
+      return 1
+    fi
+    printf '\nsrc/gz antiscan %s\n' "$1" >> "$ASCN_FEED_CONF" || { _feed_tx_done; return 1; }
+    FEED_APPENDED=1
     info "Строка репозитория дописана в существующий $ASCN_FEED_CONF"
   else
     printf 'src/gz antiscan %s\n' "$1" > "$ASCN_FEED_CONF" || return 1
@@ -253,24 +270,91 @@ ensure_feed() {
     info "Репозиторий записан: $ASCN_FEED_CONF"
   fi
   FEED_FILE="$ASCN_FEED_CONF"
+  FEED_NAME="antiscan"
   FEED_URL="$1"
   return 0
 }
 
+# Меняет URL только в строке «src/gz antiscan <url>», прочие строки файла не трогает
 set_feed_url() {
-  printf 'src/gz antiscan %s\n' "$1" > "$FEED_FILE" || return 1
+  local tmp="$FEED_FILE.tmp.$$"
+  if ! awk -v o="$FEED_URL" -v n="$1" '
+    $1 == "src/gz" && $2 == "antiscan" && $3 == o && NF == 3 { print "src/gz antiscan " n; next }
+    { print }' "$FEED_FILE" > "$tmp" || ! cat "$tmp" > "$FEED_FILE"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  rm -f "$tmp"
   FEED_URL="$1"
 }
 
-# opkg update + проверка, что индекс Antiscan действительно загружен
+_feed_tx_done() {
+  [ -n "$FEED_ORIG" ] && rm -f "$FEED_ORIG"
+  FEED_ORIG=""
+}
+
+# Откат записи репозитория, добавленной этим запуском (установка не удалась)
+_install_rollback_feed() {
+  local expect
+  if [ "$FEED_CREATED" = "1" ] && [ -f "$ASCN_FEED_CONF" ]; then
+    rm -f "$ASCN_FEED_CONF" && info "Откат: удалён созданный $ASCN_FEED_CONF"
+  elif [ "$FEED_APPENDED" = "1" ] && [ -n "$FEED_ORIG" ] && [ -f "$FEED_ORIG" ]; then
+    # Возвращаем исходное содержимое, только если после нас файл никто не менял
+    expect="$FEED_ORIG.expect"
+    { cat "$FEED_ORIG"; printf '\nsrc/gz antiscan %s\n' "$FEED_URL"; } > "$expect"
+    if cmp -s "$expect" "$ASCN_FEED_CONF" && cat "$FEED_ORIG" > "$ASCN_FEED_CONF"; then
+      info "Откат: из $ASCN_FEED_CONF убрана добавленная строка репозитория (остальное без изменений)."
+    else
+      warn "$ASCN_FEED_CONF изменён во время установки — уберите вручную строку: src/gz antiscan $FEED_URL"
+    fi
+    rm -f "$expect"
+  fi
+  FEED_CREATED=0; FEED_APPENDED=0
+  _feed_tx_done
+}
+
+# Каталог индексов opkg (lists_dir из opkg.conf; в Entware — /opt/var/opkg-lists)
+opkg_lists_dir() {
+  local d
+  d=$(awk '$1 == "lists_dir" { print $NF; exit }' "$OPKG_MAIN_CONF" 2>/dev/null)
+  printf '%s\n' "${d:-/opt/var/opkg-lists}"
+}
+
+# opkg update + проверка, что индекс Antiscan действительно загружен заново.
+# При ошибке загрузки opkg оставляет прежний файл индекса, поэтому он
+# откладывается на время update: устаревшая версия не выдаётся за свежую.
 FEED_VER=""
 opkg_refresh() {
-  local rc=0
+  local rc=0 list="" prev="" had=0 moved=0 fresh=0
+  FEED_VER=""
+  [ -n "$FEED_NAME" ] && list="$(opkg_lists_dir)/$FEED_NAME"
+  if [ -n "$list" ] && [ -f "$list" ]; then
+    had=1
+    prev="$list.ascn-prev.$$"
+    mv -f "$list" "$prev" 2>/dev/null && moved=1
+  fi
   info "opkg update ..."
   opkg update || rc=$?
+  if [ "$moved" = "1" ]; then
+    if [ -s "$list" ]; then
+      fresh=1
+    else
+      [ -e "$list" ] || mv -f "$prev" "$list"   # прежний кэш opkg — на место
+    fi
+    rm -f "$prev"
+  elif [ "$had" = "0" ] && [ -n "$list" ] && [ -s "$list" ]; then
+    fresh=1
+  fi
+  # Без подтверждённо нового индекса успехом считается только opkg update с кодом 0
+  # (и только если прежний индекс не пропал после update).
+  if [ "$fresh" = "0" ] && { [ "$rc" -ne 0 ] || [ "$moved" = "1" ]; }; then
+    error "Индекс репозитория Antiscan не обновлён (${FEED_URL:-?}), opkg update код $rc. Сеть / DNS / HTTPS?"
+    [ "$had" = "1" ] && warn "Прежний индекс из кэша opkg не используется: он может быть устаревшим."
+    return 1
+  fi
   FEED_VER=$(feed_version)
   if [ -n "$FEED_VER" ]; then
-    [ "$rc" -ne 0 ] && warn "opkg update вернул код $rc (вероятно, недоступен другой репозиторий), индекс Antiscan загружен."
+    [ "$rc" -ne 0 ] && warn "opkg update вернул код $rc (недоступен другой репозиторий), индекс Antiscan загружен заново."
     return 0
   fi
   error "Индекс репозитория Antiscan не загружен (${FEED_URL:-?}). Сеть / DNS / HTTPS?"
@@ -624,7 +708,7 @@ show_status() {
     warn "Пакет opkg: не установлен"
   fi
   if found=$(feed_find); then
-    info "Репозиторий: ${found#* } (${found%% *})"
+    info "Репозиторий: ${found##* } (${found%% *})"
   else
     warn "Репозиторий Antiscan в opkg не настроен"
   fi
@@ -701,7 +785,6 @@ do_install() {
   echo "  Antiscan работает только для IPv4 и TCP; правила — в таблице filter (INPUT/FORWARD)."
   confirm "Установить Antiscan?" y || { info "Отменено."; return 0; }
 
-  FEED_CREATED=0
   ensure_feed "$FEED_URL_PRIMARY" || return 1
   if ! ensure_https_deps || ! refresh_with_fallback; then
     _install_rollback_feed
@@ -715,8 +798,10 @@ do_install() {
   if ! pkg_installed "$ASCN_PKG"; then
     error "Antiscan не установлен (opkg код $rc)."
     pkg_broken "$ASCN_PKG" && error "Пакет распакован, но не настроен (post-install). Подробности выше."
+    _install_rollback_feed
     return 1
   fi
+  _feed_tx_done
   if [ ! -x "$ASCN_INIT" ] || [ ! -f "$ASCN_CONF" ]; then
     error "Пакет отмечен установленным, но нет $ASCN_INIT или $ASCN_CONF."
     return 1
@@ -731,12 +816,6 @@ do_install() {
   fi
   post_install_setup
   return 0
-}
-
-_install_rollback_feed() {
-  if [ "$FEED_CREATED" = "1" ] && [ -f "$ASCN_FEED_CONF" ]; then
-    rm -f "$ASCN_FEED_CONF" && info "Откат: удалён созданный $ASCN_FEED_CONF"
-  fi
 }
 
 post_install_setup() {
@@ -924,8 +1003,157 @@ ask_ports() {
   done
 }
 
+# ---------------------------------------------------------------------------
+# Применение ascn.conf и проверка фактического состояния защиты
+# ---------------------------------------------------------------------------
+# reload upstream сначала удаляет правила (remove_rules), затем добавляет новые;
+# код возврата не отражает ошибки add_rules, а прерванный reload оставляет
+# $ASCN_LOCK_FILE, с которым Antiscan отказывается от start/stop/reload/update_rules.
+# Поэтому результат проверяется по iptables (только -L / -C, без изменений).
+
+# Значение из применённой конфигурации (как read_config: ascn.conf, поверх — temp)
+applied_get() {
+  if [ -f "$ASCN_TEMP_CONF" ]; then conf_get "$1" "$ASCN_TEMP_CONF"; else conf_get "$1"; fi
+}
+
+PROT_MISSING=""
+# $1 интерфейсы  $2 PORTS  $3 PORTS_FORWARDED  $4 ENABLE_HONEYPOT  $5 HONEYPOT_PORTS
+protection_check() {
+  local i
+  PROT_MISSING=""
+  if ! command -v iptables >/dev/null 2>&1; then PROT_MISSING=" (нет iptables)"; return 1; fi
+  is_running || PROT_MISSING=" флаг-$ASCN_RUN_FILE"
+  set -f
+  if ! iptables -w -t filter -L ANTISCAN -n >/dev/null 2>&1; then
+    PROT_MISSING="$PROT_MISSING цепочка-ANTISCAN"
+  else
+    for i in $1; do
+      if [ -n "$2" ] && ! iptables -w -t filter -C INPUT -i "$i" -p tcp -m multiport --dports "$2" -j ANTISCAN >/dev/null 2>&1; then
+        PROT_MISSING="$PROT_MISSING INPUT/$i"
+      fi
+      if [ -n "$3" ] && ! iptables -w -t filter -C FORWARD -i "$i" -p tcp -m multiport --dports "$3" -j ANTISCAN >/dev/null 2>&1; then
+        PROT_MISSING="$PROT_MISSING FORWARD/$i"
+      fi
+    done
+  fi
+  if [ "$4" = "1" ] && [ -n "$5" ]; then
+    if ! iptables -w -t filter -L ANTISCAN_HONEYPOT -n >/dev/null 2>&1; then
+      PROT_MISSING="$PROT_MISSING цепочка-ANTISCAN_HONEYPOT"
+    else
+      for i in $1; do
+        iptables -w -t filter -C INPUT -i "$i" -p tcp -m multiport --dports "$5" -j ANTISCAN_HONEYPOT >/dev/null 2>&1 ||
+          PROT_MISSING="$PROT_MISSING HONEYPOT/$i"
+      done
+    fi
+  fi
+  set +f
+  [ -z "$PROT_MISSING" ]
+}
+
+protection_applied() {
+  protection_check "$(applied_get ISP_INTERFACES)" "$(applied_get PORTS)" "$(applied_get PORTS_FORWARDED)" \
+    "$(applied_get ENABLE_HONEYPOT)" "$(applied_get HONEYPOT_PORTS)"
+}
+
+applied_summary() {
+  printf 'ISP_INTERFACES="%s" PORTS="%s" PORTS_FORWARDED="%s"' \
+    "$(applied_get ISP_INTERFACES)" "$(applied_get PORTS)" "$(applied_get PORTS_FORWARDED)"
+}
+
+# Идёт ли сейчас antiscan reload. 0 = да, 1 = нет, 2 = не удалось проверить.
+# Через /proc/*/cmdline: ps из procps-ng без опций не показывает аргументы.
+reload_process_state() {
+  local f c
+  [ -d "$PROC_DIR/self" ] || return 2
+  for f in "$PROC_DIR"/[0-9]*/cmdline; do
+    [ -r "$f" ] || continue
+    c=$(tr '\000' ' ' < "$f" 2>/dev/null)
+    case "$c" in
+      *S99ascn\ reload*|*antiscan\ reload*) return 0 ;;
+    esac
+  done
+  return 1
+}
+
+wait_reload_lock() {
+  local i=0
+  while [ -f "$ASCN_LOCK_FILE" ] && [ "$i" -lt "$ASCN_LOCK_WAIT" ]; do
+    sleep 1
+    i=$((i + 1))
+  done
+}
+
+# $1..$3 — записанные ISP_INTERFACES / PORTS / PORTS_FORWARDED
+apply_reload() {
+  local rc=0 prot=1
+  info "Применяем: antiscan reload"
+  "$ASCN_INIT" reload || rc=$?
+  wait_reload_lock
+  protection_applied && prot=0
+  if [ ! -f "$ASCN_LOCK_FILE" ] && [ "$prot" = "0" ]; then
+    if [ "$(applied_get ISP_INTERFACES)" = "$1" ] && [ "$(applied_get PORTS)" = "$2" ] &&
+       [ "$(applied_get PORTS_FORWARDED)" = "$3" ]; then
+      [ "$rc" -ne 0 ] && warn "antiscan reload вернул код $rc, но новые параметры применены."
+      info "Конфигурация применена, правила Antiscan в iptables на месте."
+      return 0
+    fi
+    error "antiscan reload (код $rc) не применил новые параметры. Защита работает с прежними:"
+    echo "  $(applied_summary)"
+    if [ -n "$BACKUP_PATH" ] && confirm "Вернуть прежний ascn.conf из бэкапа?" y; then
+      cp -p "$BACKUP_PATH" "$ASCN_CONF" && info "Восстановлено из $BACKUP_PATH."
+    fi
+    return 1
+  fi
+  error "После antiscan reload (код $rc) защита Antiscan неполная."
+  recover_protection
+}
+
+# Восстановление после неудачного reload: только штатные команды Antiscan,
+# firewall целиком не очищается. 0 = правила на месте (проверено iptables -C).
+recover_protection() {
+  [ -n "$PROT_MISSING" ] && warn "Не найдено:$PROT_MISSING"
+  warn "Пока правила не восстановлены, Antiscan не защищает указанные порты."
+  if [ -f "$ASCN_LOCK_FILE" ]; then
+    warn "Остался $ASCN_LOCK_FILE: reload не завершился, Antiscan не выполнит start/stop/reload/update_rules."
+    reload_process_state
+    case $? in
+      0) error "Процесс antiscan reload ещё работает — дождитесь его и проверьте статус (пункт 2)."; return 1 ;;
+      2) error "Нет $PROC_DIR — не удаётся проверить, завершён ли reload. Если процесса нет: rm $ASCN_LOCK_FILE, затем antiscan update_rules."; return 1 ;;
+    esac
+    if ! confirm "Процесса antiscan reload нет. Удалить зависший $ASCN_LOCK_FILE?" y; then
+      warn "Флаг оставлен. Вручную: rm $ASCN_LOCK_FILE && antiscan update_rules"
+      return 1
+    fi
+    rm -f "$ASCN_LOCK_FILE"
+  fi
+  if is_running && confirm "Восстановить правила: antiscan update_rules (добавляет только недостающие, блокировки сохраняются)?" y; then
+    "$ASCN_INIT" update_rules
+    if protection_applied; then
+      info "Правила Antiscan восстановлены для $(applied_summary)"
+      return 0
+    fi
+    warn "update_rules не восстановил правила, не найдено:$PROT_MISSING"
+  fi
+  if [ -n "$BACKUP_PATH" ] && [ -f "$BACKUP_PATH" ] &&
+     confirm "Вернуть прежний ascn.conf и перезапустить Antiscan?" y; then
+    if cp -p "$BACKUP_PATH" "$ASCN_CONF"; then
+      info "ascn.conf восстановлен из $BACKUP_PATH."
+      warn_bans_dropped
+      run_tty "$ASCN_INIT" restart
+      if [ ! -f "$ASCN_LOCK_FILE" ] && protection_applied; then
+        info "Antiscan перезапущен, правила на месте: $(applied_summary)"
+        return 0
+      fi
+      error "После перезапуска правила неполные, не найдено:$PROT_MISSING"
+    fi
+  fi
+  error "Защита Antiscan не восстановлена. Проверьте: antiscan status; iptables -w -t filter -S | grep ANTISCAN"
+  echo "  После перезагрузки роутера Antiscan запустится с текущим ascn.conf."
+  return 1
+}
+
 do_configure() {
-  local cur_isp cur_ports cur_fwd new_ports new_fwd rc=0
+  local cur_isp cur_ports cur_fwd new_ports new_fwd
   need_installed || return 1
   if [ ! -f "$ASCN_CONF" ]; then error "Нет $ASCN_CONF"; return 1; fi
   if ! conf_format_ok "$ASCN_CONF"; then
@@ -970,17 +1198,7 @@ do_configure() {
   info "ascn.conf обновлён."
 
   if is_running; then
-    info "Применяем: antiscan reload"
-    "$ASCN_INIT" reload || rc=$?
-    if [ "$rc" -eq 0 ] && is_running; then
-      info "Конфигурация применена."
-    else
-      error "antiscan reload завершился с ошибкой (код $rc)."
-      if confirm "Вернуть прежний ascn.conf из бэкапа?" y; then
-        cp -p "$BACKUP_PATH" "$ASCN_CONF" && info "Восстановлено из $BACKUP_PATH. Проверьте службу: пункт 3."
-      fi
-      return 1
-    fi
+    apply_reload "$NEW_ISP" "$new_ports" "$new_fwd" || return 1
   else
     if confirm "Antiscan не запущен. Запустить сейчас?" y; then
       run_tty "$ASCN_INIT" start
@@ -1057,12 +1275,12 @@ do_update() {
     return 1
   fi
   old=$(pkg_version "$ASCN_PKG")
-  FEED_CREATED=0
   ensure_feed "$FEED_URL_PRIMARY" || return 1
   if ! refresh_with_fallback; then
     _install_rollback_feed
     return 1
   fi
+  _feed_tx_done
   if ! upgrade_available; then
     info "Установлена актуальная версия: $old (в репозитории: $FEED_VER)."
     return 0
@@ -1116,6 +1334,20 @@ do_update() {
 # ---------------------------------------------------------------------------
 # 8) Удаление
 # ---------------------------------------------------------------------------
+# Новый каталог с правами 700 (umask 077 на время mkdir, без -p: существующий
+# путь или симлинк не переиспользуются). Путь → stdout.
+make_private_dir() {
+  local d="$1"
+  [ -e "$d" ] && d="$d.$$"
+  ( umask 077 && mkdir "$d" ) 2>/dev/null || return 1
+  chmod 700 "$d" || return 1
+  case "$(ls -ld "$d" 2>/dev/null)" in
+    drwx------*) ;;
+    *) return 1 ;;
+  esac
+  printf '%s\n' "$d"
+}
+
 do_remove() {
   local keep=1 bdir="" f rc=0 left="" ok=1 ipsets_dir
   ipsets_dir=$(conf_get IPSETS_DIRECTORY)
@@ -1134,13 +1366,17 @@ do_remove() {
   fi
 
   if [ "$keep" = "1" ] && [ -d "$ASCN_DIR" ]; then
-    bdir="$ASCN_BACKUP_BASE/antiscan-backup-$(date +%Y%m%d%H%M%S)"
-    if ! mkdir -p "$bdir"; then error "Не удалось создать $bdir — удаление отменено."; return 1; fi
+    bdir=$(make_private_dir "$ASCN_BACKUP_BASE/antiscan-backup-$(date +%Y%m%d%H%M%S)") ||
+      { error "Не удалось создать закрытый каталог для копии — удаление отменено."; return 1; }
     for f in $ASCN_USER_FILES; do
       [ -f "$ASCN_DIR/$f" ] || continue
-      cp -p "$ASCN_DIR/$f" "$bdir/" || { error "Не удалось скопировать $f — удаление отменено."; return 1; }
+      # Токен RCI (.tkn + .k) восстановим из пары файлов — копии только для root
+      if ! cp -p "$ASCN_DIR/$f" "$bdir/" || ! chmod 600 "$bdir/$f"; then
+        error "Не удалось скопировать $f — удаление отменено. Частичная копия: $bdir"
+        return 1
+      fi
     done
-    info "Копия настроек: $bdir"
+    info "Копия настроек (доступ только root): $bdir"
   fi
 
   if is_running && [ -x "$ASCN_INIT" ]; then

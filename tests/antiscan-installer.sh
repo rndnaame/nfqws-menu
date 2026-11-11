@@ -40,20 +40,41 @@ write_stubs() {
 S="$STUB_STATE"
 echo "opkg $*" >> "$STUB_LOG/opkg.log"
 feeds() { cat "$OPKG_MAIN_CONF" "$OPKG_CONF_DIR"/*.conf 2>/dev/null; }
+LISTS=$(awk '$1 == "lists_dir" { print $NF; exit }' "$OPKG_MAIN_CONF")
+# Как opkg: индекс источника — файл lists_dir/<имя src>; при ошибке загрузки
+# прежний файл остаётся (Entware: /opt/var/opkg-lists на накопителе).
+index_ver() {
+  feeds | awk '$1 ~ /^src/ { print $2 }' | while read -r n; do
+    [ -s "$LISTS/$n" ] && { cat "$LISTS/$n"; break; }
+  done
+}
 cmd=$1; shift
 case "$cmd" in
   update)
-    rm -f "$S/index"
-    if feeds | grep -q "$STUB_PRIMARY" && [ -f "$S/net_primary" ]; then cp "$S/feed_version" "$S/index"; fi
-    if feeds | grep -q "$STUB_MIRROR" && [ -f "$S/net_mirror" ]; then cp "$S/feed_version" "$S/index"; fi
-    [ -f "$S/index" ] || { echo "Failed to download antiscan Packages.gz" >&2; exit 1; }
-    exit 0 ;;
+    rc=0; mkdir -p "$LISTS"
+    feeds | awk '$1 ~ /^src/ { print $2, $3 }' > "$S/srcs"
+    while read -r n u; do
+      case "$u" in
+        "$STUB_PRIMARY") net="$S/net_primary" ;;
+        "$STUB_MIRROR") net="$S/net_mirror" ;;
+        *) net="$S/net_other" ;;
+      esac
+      if [ -f "$net" ] || { [ "$net" = "$S/net_other" ] && [ ! -f "$S/other_fail" ]; }; then
+        cp "$S/feed_version" "$LISTS/$n"
+      else
+        echo "*** Failed to download the package list from $u" >&2; rc=1
+      fi
+    done < "$S/srcs"
+    [ -f "$S/other_fail" ] && rc=1
+    exit $rc ;;
   list)
-    [ "$1" = antiscan ] && [ -f "$S/index" ] && echo "antiscan - $(cat "$S/index") - Antiscan utility"
+    v=$(index_ver)
+    [ "$1" = antiscan ] && [ -n "$v" ] && echo "antiscan - $v - Antiscan utility"
     exit 0 ;;
   list-upgradable)
-    if [ -f "$S/inst_antiscan" ] && [ -f "$S/index" ] && [ "$(cat "$S/inst_antiscan")" != "$(cat "$S/index")" ]; then
-      echo "antiscan - $(cat "$S/inst_antiscan") - $(cat "$S/index")"
+    v=$(index_ver)
+    if [ -f "$S/inst_antiscan" ] && [ -n "$v" ] && [ "$(cat "$S/inst_antiscan")" != "$v" ]; then
+      echo "antiscan - $(cat "$S/inst_antiscan") - $v"
     fi
     exit 0 ;;
   status)
@@ -68,8 +89,10 @@ case "$cmd" in
       case "$p" in -*) continue ;; esac
       if [ "$p" = antiscan ]; then
         [ -f "$S/install_fail" ] && { echo "Collected errors: antiscan" >&2; exit 255; }
-        [ -f "$S/index" ] || { echo "Unknown package antiscan" >&2; exit 255; }
-        cp "$S/index" "$S/inst_antiscan"
+        v=$(index_ver)
+        [ -n "$v" ] || { echo "Unknown package antiscan" >&2; exit 255; }
+        [ -f "$S/net_primary" ] || [ -f "$S/net_mirror" ] || { echo "Failed to download antiscan" >&2; exit 255; }
+        echo "$v" > "$S/inst_antiscan"
         mkdir -p "$ASCN_DIR/scripts" "$(dirname "$ASCN_HOOK")" "$(dirname "$ASCN_INIT")"
         cp "$STUB_TPL/S99ascn" "$ASCN_INIT"; chmod +x "$ASCN_INIT"
         cp "$STUB_TPL/hook" "$ASCN_HOOK"
@@ -122,11 +145,20 @@ esac
 exit 0
 EOF
 
-  # Firewall: фиксируем каждый вызов, цепочки ANTISCAN «нет»
+  # Firewall: фиксируем каждый вызов. Состояние правил Antiscan ведёт заглушка
+  # S99ascn (state/chain, state/rules: «ЦЕПОЧКА ИНТЕРФЕЙС ПОРТЫ ЦЕЛЬ»).
   cat > "$B/iptables" <<'EOF'
 #!/bin/sh
 echo "iptables $*" >> "$STUB_LOG/fw.log"
-[ -f "$STUB_STATE/chain_left" ] && exit 0
+S="$STUB_STATE"
+case "$*" in
+  "-w -t filter -L ANTISCAN -n") [ -f "$S/chain" ] || [ -f "$S/chain_left" ]; exit $? ;;
+  "-w -t filter -L ANTISCAN_HONEYPOT -n") [ -f "$S/chain_hp" ]; exit $? ;;
+  "-w -t filter -C "*)
+    # -w -t filter -C CHAIN -i IF -p tcp -m multiport --dports P -j TARGET
+    set -f; set -- $*
+    grep -qx "$5 $7 ${13} ${15}" "$S/rules" 2>/dev/null; exit $? ;;
+esac
 exit 1
 EOF
   cat > "$B/ipset" <<'EOF'
@@ -150,14 +182,42 @@ EOF
 
   # Шаблоны файлов пакета
   mkdir -p "$T/tpl"
+  # Модель S99ascn 1.10.6: read_config (проверка) → reload_config: lock,
+  # remove_rules, write_temp_config, add_rules (ошибки add_rules не влияют на код),
+  # снятие lock. start/stop/reload/update_rules отказывают при наличии lock.
   cat > "$T/tpl/S99ascn" <<'EOF'
 #!/bin/sh
+S="$STUB_STATE"
 echo "ascn $*" >> "$STUB_LOG/ascn.log"
+cget() { awk -v k="$1" 'index($0, k "=\"") == 1 { v = substr($0, length(k) + 3); sub(/"$/, "", v); r = v } END { print r }' "$2"; }
+eff() { if [ -f "$ASCN_TEMP_CONF" ]; then cget "$1" "$ASCN_TEMP_CONF"; else cget "$1" "$ASCN_CONF"; fi; }
+write_temp() { grep -E '^(ISP_INTERFACES|PORTS|PORTS_FORWARDED|ENABLE_HONEYPOT|HONEYPOT_PORTS)=' "$ASCN_CONF" > "$ASCN_TEMP_CONF"; }
+add_rules() {
+  touch "$S/chain"; p=$(eff PORTS); f=$(eff PORTS_FORWARDED); hp=$(eff HONEYPOT_PORTS)
+  [ "$(eff ENABLE_HONEYPOT)" = 1 ] && touch "$S/chain_hp"
+  for i in $(eff ISP_INTERFACES); do
+    [ -n "$p" ] && echo "INPUT $i $p ANTISCAN" >> "$S/rules"
+    [ -n "$f" ] && echo "FORWARD $i $f ANTISCAN" >> "$S/rules"
+    [ "$(eff ENABLE_HONEYPOT)" = 1 ] && echo "INPUT $i $hp ANTISCAN_HONEYPOT" >> "$S/rules"
+  done
+  sort -u "$S/rules" -o "$S/rules" 2>/dev/null || true
+}
+remove_rules() { rm -f "$S/chain" "$S/chain_hp" "$S/rules"; }
+locked() { [ -f "$ASCN_LOCK_FILE" ] && { echo "Идёт обновление конфигурации" >&2; exit 2; }; }
 case "$1" in
-  start) touch "$ASCN_RUN_FILE"; echo "Antiscan запущен" ;;
-  stop) rm -f "$ASCN_RUN_FILE"; echo "Antiscan остановлен" ;;
-  restart) rm -f "$ASCN_RUN_FILE"; touch "$ASCN_RUN_FILE" ;;
-  reload) [ -f "$STUB_STATE/reload_fail" ] && exit 1; echo "reloaded" ;;
+  start) [ -f "$ASCN_RUN_FILE" ] && exit 1; locked; write_temp; add_rules; touch "$ASCN_RUN_FILE"; echo "Antiscan запущен" ;;
+  stop) [ -f "$ASCN_RUN_FILE" ] || { echo "Antiscan не запущен" >&2; exit 0; }; locked
+        remove_rules; rm -f "$ASCN_TEMP_CONF" "$ASCN_RUN_FILE"; echo "Antiscan остановлен" ;;
+  restart) "$0" stop 1; "$0" start ;;
+  reload)
+    [ -f "$S/reload_invalid" ] && { echo "Список портов содержит недопустимые символы" >&2; exit 3; }
+    [ -f "$ASCN_RUN_FILE" ] || exit 1
+    locked
+    touch "$ASCN_LOCK_FILE"; remove_rules; rm -f "$ASCN_TEMP_CONF"; write_temp
+    [ -f "$S/reload_interrupted" ] && exit 143
+    [ -f "$S/reload_norules" ] || add_rules
+    rm -f "$ASCN_LOCK_FILE"; echo "reloaded" ;;
+  update_rules) [ -f "$ASCN_RUN_FILE" ] || exit 1; locked; [ -f "$S/update_rules_fail" ] || add_rules ;;
   status) echo "Статус: stub" ;;
   list) echo "list $2" ;;
   edit) echo '# edited' >> "$ASCN_DIR/ascn.conf" ;;
@@ -194,15 +254,18 @@ setup() {
   printf '200' > "$T/state/rci_whoami"
   echo "default via 10.0.0.1 dev eth3 proto static" > "$T/state/route_default"
   cp "$T/state/route_default" "$T/state/route_all"
-  : > "$T/opt/etc/opkg.conf"
+  printf 'dest root /\nlists_dir ext %s\n' "$T/opt/var/opkg-lists" > "$T/opt/etc/opkg.conf"
   export PATH="$T/bin:/usr/bin:/bin:/usr/sbin:/sbin"
   export STUB_STATE="$T/state" STUB_LOG="$T/log" STUB_TPL="$T/tpl"
   export STUB_PRIMARY="$PRIMARY" STUB_MIRROR="$MIRROR"
   export ASCN_DIR="$T/opt/etc/antiscan" ASCN_CONF="$T/opt/etc/antiscan/ascn.conf"
   export ASCN_INIT="$T/opt/etc/init.d/S99ascn" ASCN_HOOK="$T/opt/etc/ndm/netfilter.d/099-ascn.sh"
+  export ASCN_LOCK_FILE="$T/tmp/ascn.lock" ASCN_TEMP_CONF="$T/tmp/ascn.conf.tmp" ASCN_LOCK_WAIT=0
   export ASCN_RUN_FILE="$T/tmp/ascn.run" OPKG_CONF_DIR="$T/opt/etc/opkg" OPKG_MAIN_CONF="$T/opt/etc/opkg.conf"
   export OPT_BIN="$T/opt/bin" SYS_NET_DIR="$T/sysnet" KMOD_DIR="$T/modules" ASCN_BACKUP_BASE="$T/opt/etc"
-  export RCI_BASE="http://127.0.0.1:79/rci" ASCN_NO_TTY=1 ASCN_INSTALLER_LIB=1
+  mkdir -p "$T/proc/self" "$T/proc/1"; printf '/sbin/init\0' > "$T/proc/1/cmdline"
+  export PROC_DIR="$T/proc"
+  export RCI_BASE="http://127.0.0.1:79/rci" ASCN_NO_TTY=1 ASCN_INSTALLER_LIB=1 TMPDIR="$T/tmp"
   unset SSH_CLIENT SSH_CONNECTION 2>/dev/null || true
   mkdir -p "$T/tmp"
 }
@@ -232,14 +295,19 @@ opkg_has() { grep -q -- "$1" "$T/log/opkg.log"; }
 opkg_count() { grep -c -- "$1" "$T/log/opkg.log"; }
 conf() { awk -v k="$1" 'index($0, k "=\"") == 1 { v = substr($0, length(k) + 3); sub(/"$/, "", v); r = v } END { print r }' "$ASCN_CONF"; }
 
-# Firewall: установщик сам может только читать (iptables -L ANTISCAN) — без ipset
+# Firewall: установщик сам может только читать (iptables -L / -C) — без ipset
+FW_RO='^iptables -w -t filter (-L ANTISCAN(_HONEYPOT)? -n|-C (INPUT|FORWARD) -i [^ ]+ -p tcp -m multiport --dports [0-9,:]+ -j ANTISCAN(_HONEYPOT)?)$'
 check_firewall_readonly() {
-  if grep -v '^iptables -w -t filter -L ANTISCAN -n$' "$T/log/fw.log" | grep -q .; then
-    fail "посторонние firewall-команды: $(grep -v '^iptables -w -t filter -L ANTISCAN -n$' "$T/log/fw.log" | head -n 3 | tr '\n' ';')"
+  if grep -Ev "$FW_RO" "$T/log/fw.log" | grep -q .; then
+    fail "посторонние firewall-команды: $(grep -Ev "$FW_RO" "$T/log/fw.log" | head -n 3 | tr '\n' ';')"
   else
     ok
   fi
 }
+
+# Antiscan запущен штатно (правила в модели iptables есть)
+start_ascn() { "$ASCN_INIT" start >/dev/null 2>&1; }
+rules_for() { grep -qx "$1" "$T/state/rules" 2>/dev/null; }
 
 # ---------------------------------------------------------------------------
 # Сценарии
@@ -421,13 +489,156 @@ cp "$ASCN_CONF" "$T/conf.orig"
 run '1\n22\n\nn\n' do_configure
 check 'cmp -s "$ASCN_CONF" "$T/conf.orig" && ! ls "$ASCN_DIR"/ascn.conf.bak.* >/dev/null 2>&1' "отмена в конце изменила конфиг"
 
-setup configure_reload_fail
+setup configure_reload_ok
 preinstall
 mkdir -p "$T/sysnet/ppp0"
-touch "$ASCN_RUN_FILE" "$T/state/reload_fail"
+start_ascn
+run 'ppp0\n22,8443\n\ny\n' do_configure
+check '[ "$rc" -eq 0 ] && out_has "правила Antiscan в iptables на месте"' "успешный reload не подтверждён: rc=$rc"
+check 'rules_for "INPUT ppp0 22,8443 ANTISCAN" && rules_for "FORWARD ppp0 22,80,443 ANTISCAN"' "правила не по новой конфигурации"
+check 'grep -q -- "-C INPUT -i ppp0 -p tcp -m multiport --dports 22,8443 -j ANTISCAN" "$T/log/fw.log"' "состояние не проверено через iptables -C"
+check_firewall_readonly
+
+# reload отклонён проверкой конфигурации (exit 3): правила прежние, ascn.conf возвращается
+setup configure_reload_invalid
+preinstall
+mkdir -p "$T/sysnet/ppp0"
+start_ascn
+touch "$T/state/reload_invalid"
 cp "$ASCN_CONF" "$T/conf.orig"
 run 'ppp0\n\n\ny\ny\n' do_configure
-check '[ "$rc" -ne 0 ] && cmp -s "$ASCN_CONF" "$T/conf.orig"' "конфиг не восстановлен после ошибки reload"
+check '[ "$rc" -ne 0 ] && out_has "не применил новые параметры"' "отказ reload не распознан"
+check 'cmp -s "$ASCN_CONF" "$T/conf.orig" && rules_for "INPUT eth3 22,80,443 ANTISCAN"' "прежние правила/конфиг не сохранены"
+check '! grep -Eq "^ascn (update_rules|restart)" "$T/log/ascn.log"' "лишнее восстановление при целой защите"
+check_firewall_readonly
+
+# reload вернул 0, но правила не добавлены: раньше считалось успехом
+setup configure_reload_norules
+preinstall
+mkdir -p "$T/sysnet/ppp0"
+start_ascn
+touch "$T/state/reload_norules"
+run 'ppp0\n\n\ny\ny\n' do_configure
+check 'out_has "защита Antiscan неполная" && out_has "цепочка-ANTISCAN"' "пропавшие правила при rc=0 не обнаружены"
+check 'grep -q "^ascn update_rules" "$T/log/ascn.log" && rules_for "INPUT ppp0 22,80,443 ANTISCAN"' "правила не восстановлены update_rules"
+check '[ "$rc" -eq 0 ] && [ "$(conf ISP_INTERFACES)" = ppp0 ] && ! grep -q "^ascn restart" "$T/log/ascn.log"' "update_rules: rc=$rc"
+check_firewall_readonly
+
+# reload прерван: правила удалены, остался lock, reload-процесса нет
+setup configure_reload_interrupted
+preinstall
+mkdir -p "$T/sysnet/ppp0"
+start_ascn
+touch "$T/state/reload_interrupted"
+run 'ppp0\n\n\ny\ny\ny\n' do_configure
+check '[ ! -f "$ASCN_LOCK_FILE" ] && rules_for "INPUT ppp0 22,80,443 ANTISCAN"' "защита после прерванного reload не восстановлена"
+check '[ "$rc" -eq 0 ] && out_has "Удалить зависший"' "lock: rc=$rc"
+check_firewall_readonly
+
+# reload ещё работает (ps): lock не трогаем
+setup configure_reload_still_running
+preinstall
+mkdir -p "$T/sysnet/ppp0"
+start_ascn
+touch "$T/state/reload_interrupted"
+mkdir -p "$T/proc/4242"; printf '/bin/sh\0/opt/bin/antiscan\0reload\0' > "$T/proc/4242/cmdline"
+run 'ppp0\n\n\ny\ny\n' do_configure
+check '[ "$rc" -ne 0 ] && [ -f "$ASCN_LOCK_FILE" ] && out_has "ещё работает"' "lock снят при работающем reload"
+check '! grep -q "^ascn update_rules" "$T/log/ascn.log"' "update_rules при работающем reload"
+
+# /proc недоступен: завершённость reload не проверить — lock не трогаем
+setup configure_reload_no_proc
+preinstall
+mkdir -p "$T/sysnet/ppp0"
+start_ascn
+touch "$T/state/reload_interrupted"
+export PROC_DIR="$T/no-proc"
+run 'ppp0\n\n\ny\ny\n' do_configure
+check '[ "$rc" -ne 0 ] && [ -f "$ASCN_LOCK_FILE" ] && out_has "не удаётся проверить"' "lock снят без проверки процессов"
+
+# update_rules не помог → прежний ascn.conf + restart, состояние проверено
+setup configure_reload_restore_restart
+preinstall
+mkdir -p "$T/sysnet/ppp0"
+start_ascn
+touch "$T/state/reload_norules" "$T/state/update_rules_fail"
+cp "$ASCN_CONF" "$T/conf.orig"
+run 'ppp0\n\n\ny\ny\ny\ny\n' do_configure
+check 'cmp -s "$ASCN_CONF" "$T/conf.orig" && grep -q "^ascn restart" "$T/log/ascn.log"' "откат + restart не выполнены"
+check '[ "$rc" -eq 0 ] && rules_for "INPUT eth3 22,80,443 ANTISCAN" && ! rules_for "INPUT ppp0 22,80,443 ANTISCAN"' "правила после отката: rc=$rc"
+check_firewall_readonly
+
+# Пользователь отказался от восстановления — честный отказ, не «успех»
+setup configure_reload_recovery_declined
+preinstall
+mkdir -p "$T/sysnet/ppp0"
+start_ascn
+touch "$T/state/reload_norules"
+run 'ppp0\n\n\ny\nn\nn\n' do_configure
+check '[ "$rc" -ne 0 ] && out_has "не восстановлена"' "отказ от восстановления: rc=$rc"
+check_firewall_readonly
+
+# Устаревший индекс в кэше opkg при недоступном репозитории
+setup stale_index_update
+preinstall 1.10.5
+mkdir -p "$T/opt/var/opkg-lists"; echo 1.10.5 > "$T/opt/var/opkg-lists/antiscan"
+rm -f "$T/state/net_primary"
+run '' do_update
+check '[ "$rc" -ne 0 ] && ! out_has "актуальная версия"' "устаревший индекс принят за свежий: rc=$rc"
+check '[ "$(cat "$T/opt/var/opkg-lists/antiscan")" = 1.10.5 ] && ! ls "$T/opt/var/opkg-lists"/*ascn-prev* >/dev/null 2>&1' "кэш opkg не возвращён на место"
+check '! opkg_has "opkg upgrade"' "upgrade по устаревшему индексу"
+
+setup stale_index_install
+mkdir -p "$T/opt/var/opkg-lists"; echo 1.10.6 > "$T/opt/var/opkg-lists/antiscan"
+rm -f "$T/state/net_primary"
+run 'y\n' do_install
+check '[ "$rc" -ne 0 ] && ! opkg_has "opkg install antiscan"' "установка по устаревшему индексу"
+check '[ ! -e "$OPKG_CONF_DIR/antiscan.conf" ]' "созданный feed не откатан"
+
+# Другой репозиторий недоступен, индекс Antiscan загружен заново — продолжаем
+setup other_feed_down
+printf 'src/gz entware http://bin.entware.net/mipselsf-k3.4\n' >> "$T/opt/etc/opkg.conf"
+touch "$T/state/other_fail"
+run 'y\nn\n' do_install
+check '[ "$rc" -eq 0 ] && [ -f "$T/state/inst_antiscan" ] && out_has "загружен заново"' "свежий индекс Antiscan отвергнут: rc=$rc"
+
+# Строка feed дописана в чужой antiscan.conf → откат при неудаче, байт в байт
+setup foreign_feed_rollback_network
+printf 'src/gz other http://x' > "$OPKG_CONF_DIR/antiscan.conf"
+cp -p "$OPKG_CONF_DIR/antiscan.conf" "$T/feed.orig"
+rm -f "$T/state/net_primary"
+run 'y\n' do_install
+check '[ "$rc" -ne 0 ] && cmp -s "$OPKG_CONF_DIR/antiscan.conf" "$T/feed.orig"' "дописанная строка не откатана (сеть)"
+check '! ls "$T/tmp"/ascn-feed.* >/dev/null 2>&1' "временная копия feed не удалена"
+
+setup foreign_feed_rollback_install
+printf '# my repo\nsrc/gz other http://x\n' > "$OPKG_CONF_DIR/antiscan.conf"
+cp -p "$OPKG_CONF_DIR/antiscan.conf" "$T/feed.orig"
+touch "$T/state/install_fail"
+run 'y\n' do_install
+check '[ "$rc" -ne 0 ] && cmp -s "$OPKG_CONF_DIR/antiscan.conf" "$T/feed.orig"' "дописанная строка не откатана (opkg install)"
+
+setup created_feed_rollback_install
+touch "$T/state/install_fail"
+run 'y\n' do_install
+check '[ "$rc" -ne 0 ] && [ ! -e "$OPKG_CONF_DIR/antiscan.conf" ]' "созданный feed не откатан после ошибки opkg install"
+
+setup foreign_feed_changed_meanwhile
+printf 'src/gz other http://x\n' > "$OPKG_CONF_DIR/antiscan.conf"
+rm -f "$T/state/net_primary"
+(
+  . "$INSTALLER"
+  ensure_feed "$FEED_URL_PRIMARY" >/dev/null
+  echo 'src/gz extra http://y' >> "$OPKG_CONF_DIR/antiscan.conf"
+  _install_rollback_feed
+) > "$T/out" 2>&1
+check 'grep -q "^src/gz extra http://y$" "$OPKG_CONF_DIR/antiscan.conf" && out_has "изменён во время установки"' "чужие изменения затёрты откатом"
+
+setup foreign_feed_kept_on_success
+printf 'src/gz other http://x\n' > "$OPKG_CONF_DIR/antiscan.conf"
+run 'y\nn\n' do_install
+check '[ "$rc" -eq 0 ] && grep -q "^src/gz other http://x$" "$OPKG_CONF_DIR/antiscan.conf" && grep -q "^src/gz antiscan $PRIMARY$" "$OPKG_CONF_DIR/antiscan.conf"' "feed после успешной установки"
+check '! ls "$T/tmp"/ascn-feed.* >/dev/null 2>&1' "временная копия feed не удалена"
 
 setup remote_session_warning
 preinstall
@@ -445,8 +656,16 @@ check '[ "$rc" -ne 0 ] && out_has "не примет"' "битый ascn.conf н�
 setup remove_keep
 preinstall
 touch "$ASCN_RUN_FILE"
-printf 'TOKEN' > "$ASCN_DIR/.tkn"
+printf 'TOKEN' > "$ASCN_DIR/.tkn"; printf 'KEY' > "$ASCN_DIR/.k"
+chmod 644 "$ASCN_DIR/.tkn" "$ASCN_DIR/.k"
+old_umask=$(umask); umask 022
 run 'y\n\nn\n' do_remove
+umask "$old_umask"
+bk=$(find "$T/opt/etc" -maxdepth 1 -name 'antiscan-backup-*' | head -n 1)
+check 'case "$(ls -ld "$bk")" in drwx------*) true ;; *) false ;; esac' "каталог копии доступен не только root: $(ls -ld "$bk" 2>&1)"
+check 'case "$(ls -l "$bk/.tkn")$(ls -l "$bk/.k")" in -rw-------*-rw-------*) true ;; *) false ;; esac' "токен в копии читаем не только root"
+check '[ "$(cat "$bk/.tkn")" = TOKEN ] && [ "$(cat "$bk/.k")" = KEY ]' "токен скопирован не полностью"
+check 'case "$(ls -l "$ASCN_DIR/.tkn" 2>/dev/null)" in ""|-rw-r--r--*) true ;; *) false ;; esac' "права исходных файлов изменены"
 check '[ "$rc" -eq 0 ] && [ ! -f "$T/state/inst_antiscan" ]' "пакет не удалён"
 check 'grep -q "^ascn stop" "$T/log/ascn.log"' "служба не остановлена"
 check '! opkg_has "autoremove"' "удаление затронуло зависимости"
