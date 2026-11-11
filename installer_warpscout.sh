@@ -19,7 +19,7 @@
 #   sh installer_warpscout.sh
 #   curl -fsSL https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/installer_warpscout.sh | sh
 
-SCRIPT_VERSION="0.1.68"
+SCRIPT_VERSION="0.1.69"
 
 # ANSI (portable для ash/BusyBox)
 RED=$(printf '\033[0;31m')
@@ -1746,12 +1746,133 @@ awg_parse_best_endpoints() {
   [ -s "$out" ]
 }
 
-# Выбор endpoint из best-per-node. Результат: SELECTED_EP, SELECTED_NODE
+# /24 из ip:port → a.b.c.0/24
+_ep_to_slash24() {
+  ep="$1"
+  ip="${ep%%:*}"
+  case "$ip" in
+    *.*.*.*)
+      a=$(printf '%s\n' "$ip" | cut -d. -f1)
+      b=$(printf '%s\n' "$ip" | cut -d. -f2)
+      c=$(printf '%s\n' "$ip" | cut -d. -f3)
+      printf '%s.%s.%s.0/24\n' "$a" "$b" "$c"
+      ;;
+    *) printf '\n' ;;
+  esac
+}
+
+# Доп. endpoint'ы из основной таблицы list (не best-per-node):
+# до 2 на каждую ноду из best, другие /24, не тот же endpoint.
+# out: NODE|ENDPOINT|TUN_PING|LOSS|LOCATION|SLASH24
+# $1=list $2=bestf $3=out
+awg_parse_extra_endpoints() {
+  list="$1"
+  bestf="$2"
+  out="$3"
+  : > "$out"
+  [ -f "$list" ] && [ -s "$bestf" ] || return 1
+
+  # уже занятые endpoint'ы и счётчик /24 на ноду
+  taken_ep="$TMPDIR/extra-taken-ep.txt"
+  : > "$taken_ep"
+  while IFS='|' read -r bn be _rest || [ -n "$bn" ]; do
+    [ -n "$be" ] && printf '%s\n' "$be" >> "$taken_ep"
+  done < "$bestf"
+
+  # ноды из best (порядок сохраняем)
+  nodesf="$TMPDIR/extra-nodes.txt"
+  cut -d'|' -f1 "$bestf" 2>/dev/null | sed '/^$/d' > "$nodesf"
+
+  in_main=0
+  in_best=0
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      *'Best endpoint per node'*)
+        in_best=1
+        in_main=0
+        continue
+        ;;
+      ENDPOINT[[:space:]]*)
+        # заголовок основной таблицы
+        in_main=1
+        continue
+        ;;
+    esac
+    [ "$in_best" = "1" ] && continue
+    [ "$in_main" = "1" ] || continue
+    case "$line" in
+      ''|\#*) continue ;;
+    esac
+    set -- $line
+    ep="$1"
+    case "$ep" in
+      *:* ) ;;
+      *) continue ;;
+    esac
+    # NODE — предпоследнее «слово-код» перед location (обычно $7)
+    # формат: EP ep_ping tun_ping LOSS SEEN NODE LOCATION...
+    node=$(printf '%s\n' "$line" | awk '{
+      for (i=1;i<=NF;i++) if ($i ~ /%$/) { print $(i+2); exit }
+    }')
+    [ -n "$node" ] || continue
+    # только ноды, которые есть в best
+    grep -qxF "$node" "$nodesf" 2>/dev/null || continue
+
+    # уже выбран как best?
+    grep -qxF "$ep" "$taken_ep" 2>/dev/null && continue
+
+    tunp=$(printf '%s\n' "$line" | awk '{
+      n=0
+      for (i=2;i<=NF;i++) if ($i ~ /ms$/) { n++; if (n==2) { print $i; exit } }
+    }')
+    loss=$(printf '%s\n' "$line" | awk '{
+      for (i=1;i<=NF;i++) if ($i ~ /%$/) { print $i; exit }
+    }')
+    loc=$(printf '%s\n' "$line" | awk '{
+      for (i=1;i<=NF;i++) if ($i ~ /%$/) { start=i+3; break }
+      loc=""
+      for (j=start;j<=NF;j++) loc = (loc ? loc " " : "") $j
+      print loc
+    }')
+    s24=$(_ep_to_slash24 "$ep")
+    [ -n "$s24" ] || continue
+    # loss как число для сортировки позже
+    lossn=$(printf '%s\n' "${loss:-100%}" | tr -dc '0-9')
+    [ -n "$lossn" ] || lossn=100
+    tunpn=$(printf '%s\n' "${tunp:-999ms}" | tr -dc '0-9')
+    [ -n "$tunpn" ] || tunpn=999
+    printf '%s|%s|%s|%s|%s|%s|%s|%s\n' \
+      "$node" "$ep" "${tunp:-?}" "${loss:-?}" "${loc:-}" "$s24" "$lossn" "$tunpn"
+  done < "$list" | sort -t'|' -k1,1 -k7,7n -k8,8n > "$TMPDIR/extra-all.txt"
+
+  # на ноду: до 2 endpoint'ов из разных /24
+  for node in $(cat "$nodesf"); do
+    n_ok=0
+    used24="$TMPDIR/extra-used24-$$"
+    : > "$used24"
+    while IFS='|' read -r n ep tunp loss loc s24 lossn tunpn || [ -n "$n" ]; do
+      [ "$n" = "$node" ] || continue
+      [ -n "$ep" ] || continue
+      grep -qxF "$s24" "$used24" 2>/dev/null && continue
+      printf '%s\n' "$s24" >> "$used24"
+      printf '%s|%s|%s|%s|%s|%s\n' "$node" "$ep" "$tunp" "$loss" "$loc" "$s24" >> "$out"
+      n_ok=$((n_ok + 1))
+      [ "$n_ok" -ge 2 ] && break
+    done < "$TMPDIR/extra-all.txt"
+    rm -f "$used24" 2>/dev/null || true
+  done
+  [ -s "$out" ]
+}
+
+# Выбор endpoint: best-per-node + до 2 доп. /24 на ноду. SELECTED_EP, SELECTED_NODE
 awg_pick_endpoint() {
   SELECTED_EP=""
   SELECTED_NODE=""
   bestf="$TMPDIR/best-ep.txt"
+  extraf="$TMPDIR/extra-ep.txt"
+  menuf="$TMPDIR/ep-menu.txt"
   mkdir -p "$TMPDIR" 2>/dev/null || true
+  : > "$menuf"
 
   if [ ! -f "$SCAN_OUT" ] || [ ! -s "$SCAN_OUT" ]; then
     error "Нет списка: $SCAN_OUT (сначала п. 3)."
@@ -1761,6 +1882,8 @@ awg_pick_endpoint() {
     error "Не удалось разобрать «Best endpoint per node» в $SCAN_OUT"
     return 1
   fi
+  # доп. точки — по возможности; пустой extra не ошибка
+  awg_parse_extra_endpoints "$SCAN_OUT" "$bestf" "$extraf" 2>/dev/null || : > "$extraf"
 
   echo
   printf '%s\n' "${BOLD}Лучший endpoint по нодам (из list):${NC}"
@@ -1775,7 +1898,25 @@ awg_pick_endpoint() {
     printf '  %s%d)%s  %s%-4s%s  %s  %s[tun %s · loss %s]%s  %s%s\n' \
       "$BOLD" "$i" "$NC" "$CYAN" "$node" "$NC" "$ep" \
       "$DIM" "$tunp" "$loss" "$NC" "${loc}" "$mark"
+    printf '%s|%s\n' "$node" "$ep" >> "$menuf"
   done < "$bestf"
+
+  if [ -s "$extraf" ]; then
+    echo
+    printf '%s\n' "${BOLD}Дополнительные точки (другие /24):${NC}"
+    while IFS='|' read -r node ep tunp loss loc s24 || [ -n "$node" ]; do
+      [ -n "$ep" ] || continue
+      i=$((i + 1))
+      mark=""
+      case "$node" in
+        DME) mark=" ${YELLOW}(часто DPI)${NC}" ;;
+      esac
+      printf '  %s%d)%s  %s%-15s%s  %s  %s[tun %s · loss %s]%s  %s %s%s\n' \
+        "$BOLD" "$i" "$NC" "$DIM" "${s24:-?}" "$NC" "$ep" \
+        "$DIM" "$tunp" "$loss" "$NC" "$node" "${loc}" "$mark"
+      printf '%s|%s\n' "$node" "$ep" >> "$menuf"
+    done < "$extraf"
+  fi
 
   # текущий Endpoint из conf
   cur=$(grep -iE '^[[:space:]]*Endpoint[[:space:]]*=' "$CONF_OUT" 2>/dev/null | head -1 | sed 's/^[^=]*=[[:space:]]*//;s/[[:space:]]*$//')
@@ -1795,8 +1936,8 @@ awg_pick_endpoint() {
     warn "Неверный номер."; return 1
   fi
 
-  SELECTED_NODE=$(sed -n "${sel}p" "$bestf" | cut -d'|' -f1)
-  SELECTED_EP=$(sed -n "${sel}p" "$bestf" | cut -d'|' -f2)
+  SELECTED_NODE=$(sed -n "${sel}p" "$menuf" | cut -d'|' -f1)
+  SELECTED_EP=$(sed -n "${sel}p" "$menuf" | cut -d'|' -f2)
   if [ -z "$SELECTED_EP" ]; then
     error "Пустой endpoint."
     return 1
