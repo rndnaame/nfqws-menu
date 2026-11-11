@@ -1047,7 +1047,7 @@ port_is_open() {
 # Метки ⭡: ключи UPD_CACHE = nfqws-keenetic|nfqws2-keenetic|nfqws-keenetic-web|
 #   tg-ws-proxy-rs|dpi-detector|awg-manager (см. upd_check_bg).
 show_installed() {
-  local out web_up=0 ui_up=0 has_sb=0 extras="" v
+  local out web_up=0 ui_up=0 has_sb=0 ascn_up=0 extras="" v
 
   PORT90_CACHE=""
   refresh_opkg_cache
@@ -1059,6 +1059,8 @@ show_installed() {
   # порты web/ui и sing-box — по одному разу
   port_is_open 90 && web_up=1
   port_is_open 8090 && ui_up=1
+  # Antiscan не держит процесс: признак работы — /tmp/ascn.run (S99ascn)
+  [ -f /tmp/ascn.run ] && ascn_up=1
   { [ -x /opt/etc/awg-manager/singbox/sing-box ] || [ -f /opt/etc/awg-manager/singbox/sing-box ]; } && has_sb=1
 
   # --- внешние tools (не из opkg status) → extras tool|name|ver|proc ---
@@ -1114,7 +1116,7 @@ show_installed() {
   fi
 
   out=$(
-    WEB_UP="$web_up" UI_UP="$ui_up" HAS_SB="$has_sb" \
+    WEB_UP="$web_up" UI_UP="$ui_up" HAS_SB="$has_sb" ASCN_UP="$ascn_up" \
     G="$GREEN" N="$NC" R="${RUN_MARK}" U="${UPD_MARK}" D="$DIM" \
     awk -v none="$LBL_NONE" '
     function ver_gt(a, b,   i, na, nb, xa, xb, ca, cb) {
@@ -1152,6 +1154,7 @@ show_installed() {
       if (!(pkg in opkg)) return
       if (special == "web") up = (WEB_UP || proc_has("lighttpd"))
       else if (special == "ui") up = (UI_UP || proc_has("lighttpd"))
+      else if (special == "ascn") up = ASCN_UP
       else if (proc != "") up = proc_has(proc)
       else up = 0
       row(pkg, opkg[pkg], mark_run(up) mark_upd(pkg, opkg[pkg]))
@@ -1163,6 +1166,7 @@ show_installed() {
       U = ENVIRON["U"]; D = ENVIRON["D"]
       WEB_UP = ENVIRON["WEB_UP"] + 0
       UI_UP  = ENVIRON["UI_UP"] + 0
+      ASCN_UP = ENVIRON["ASCN_UP"] + 0
       HAS_SB = ENVIRON["HAS_SB"] + 0
     }
     /^---PROC---$/  { section = "proc";  next }
@@ -1203,6 +1207,7 @@ show_installed() {
       emit_opkg("nfqws2-ui",          "",       "ui")
       emit_opkg("usque-keenetic",     "usque",  "")
       emit_opkg("firc",               "firc",   "")
+      emit_opkg("antiscan",           "",       "ascn")
 
       if ("tg-ws-proxy-rs" in tools) {
         row("tg-ws-proxy-rs", tools["tg-ws-proxy-rs"],
@@ -1229,7 +1234,7 @@ show_installed() {
       # прочие init.d (cron, dropbear, opera-proxy, …)
       skip["nfqws"]=1; skip["nfqws2"]=1; skip["lighttpd"]=1; skip["usque"]=1
       skip["tg-ws-proxy"]=1; skip["tg-ws-proxy-rs"]=1; skip["magitrickle"]=1
-      skip["telemt"]=1; skip["telemt-panel"]=1; skip["firc"]=1
+      skip["telemt"]=1; skip["telemt-panel"]=1; skip["firc"]=1; skip["ascn"]=1
       if (("awg-manager" in opkg) || awgdir) skip["awg-manager"]=1
       for (svc in inits) {
         if (svc in skip) continue
@@ -4421,6 +4426,18 @@ menu_warpscout() {
   fi
 }
 
+# 19. Antiscan — блокировка сканеров портов (https://github.com/dimon27254/antiscan)
+# Установка через installer_antiscan.sh (opkg-репозиторий Antiscan)
+ANTISCAN_INSTALL_URL="https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/installer_antiscan.sh"
+
+menu_antiscan() {
+  if ! run_menu_remote_sh "19" "Antiscan" "$ANTISCAN_INSTALL_URL" 2000; then
+    error "Установщик Antiscan завершился с ошибкой."
+    return 1
+  fi
+  refresh_opkg_cache 2>/dev/null || true
+}
+
 menu_magitrickle() {
   echo
   info "MagiTrickle"
@@ -7132,6 +7149,7 @@ main_menu() {
     echo "      16. TG WS Proxy Rust"
     echo "      17. firc"
     echo "      18. warpscout"
+    echo "      19. Antiscan"
     echo
     printf '%s\n' "${CYAN}${BOLD}[::]  ${LBL_REMOVE} [${GREEN}S${CYAN}${BOLD}]  |  ${LBL_LANG} [${GREEN}77${CYAN}${BOLD}]${NC}"
     echo "      88. $LBL_88"
@@ -7167,6 +7185,7 @@ main_menu() {
       16) menu_tg_ws_proxy_rs || true ;;
       17) menu_firc || true ;;
       18) menu_warpscout || true ;;
+      19) menu_antiscan || true ;;
       S|s) menu_service || true ;;
       U|u) opkg_upgrade_all || true ;;
       o|O) menu_opera_hidden || true ;;
