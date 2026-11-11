@@ -19,7 +19,7 @@
 #   sh installer_warpscout.sh
 #   curl -fsSL https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/installer_warpscout.sh | sh
 
-SCRIPT_VERSION="0.1.69"
+SCRIPT_VERSION="0.1.72"
 
 # ANSI (portable для ash/BusyBox)
 RED=$(printf '\033[0;31m')
@@ -1746,122 +1746,135 @@ awg_parse_best_endpoints() {
   [ -s "$out" ]
 }
 
-# /24 из ip:port → a.b.c.0/24
-_ep_to_slash24() {
-  ep="$1"
-  ip="${ep%%:*}"
-  case "$ip" in
-    *.*.*.*)
-      a=$(printf '%s\n' "$ip" | cut -d. -f1)
-      b=$(printf '%s\n' "$ip" | cut -d. -f2)
-      c=$(printf '%s\n' "$ip" | cut -d. -f3)
-      printf '%s.%s.%s.0/24\n' "$a" "$b" "$c"
-      ;;
-    *) printf '\n' ;;
-  esac
+# Быстрый разбор list (один awk):
+#   best_out  → NODE|ENDPOINT|TUN_PING|LOSS|LOCATION
+#   extra_out → NODE|ENDPOINT|TUN_PING|LOSS|LOCATION|SLASH24  (≤2 разных /24 на ноду)
+# $1=list $2=best_out $3=extra_out
+# Важно: в list сначала основная таблица, best-per-node — в конце.
+awg_parse_list_endpoints() {
+  list="$1"
+  best_out="$2"
+  extra_out="$3"
+  : > "$best_out"
+  : > "$extra_out"
+  [ -f "$list" ] || return 1
+
+  awk -v best_out="$best_out" -v extra_out="$extra_out" '
+  function slash24(ep,  ip, n, a) {
+    ip = ep; sub(/:.*/, "", ip)
+    n = split(ip, a, ".")
+    if (n != 4) return ""
+    return a[1] "." a[2] "." a[3] ".0/24"
+  }
+  BEGIN { in_main = 0; in_best = 0; nb = 0; cand_n = 0 }
+  /Best endpoint per node/ { in_best = 1; in_main = 0; next }
+  /^ENDPOINT[[:space:]]/ && /PING/ { if (!in_best) in_main = 1; next }
+  /^#/ || /^[[:space:]]*$/ { next }
+  /^NODE[[:space:]]/ { next }
+
+  in_best {
+    node = $1; ep = $2
+    if (ep !~ /:/) next
+    tunp = "?"; loss = "?"; loc = ""
+    nms = 0
+    for (i = 3; i <= NF; i++) {
+      if ($i ~ /ms$/) {
+        nms++
+        if (nms == 2) tunp = $i
+      } else if ($i ~ /%$/) {
+        loss = $i
+        loc = ""
+        for (j = i + 2; j <= NF; j++)
+          loc = (loc == "" ? $j : loc " " $j)
+        break
+      }
+    }
+    nb++
+    best_node[nb] = node; best_ep[nb] = ep
+    best_tun[nb] = tunp; best_loss[nb] = loss; best_loc[nb] = loc
+    taken_ep[ep] = 1
+    node_ok[node] = 1
+    next
+  }
+
+  # основную таблицу только копим — фильтр по node_ok в END (best ещё не прочитан)
+  in_main {
+    ep = $1
+    if (ep !~ /:/) next
+    tunp = "?"; loss = "?"; node = ""; loc = ""
+    nms = 0
+    for (i = 2; i <= NF; i++) {
+      if ($i ~ /ms$/) {
+        nms++
+        if (nms == 2) tunp = $i
+      } else if ($i ~ /%$/) {
+        loss = $i
+        node = $(i + 2)
+        loc = ""
+        for (j = i + 3; j <= NF; j++)
+          loc = (loc == "" ? $j : loc " " $j)
+        break
+      }
+    }
+    if (node == "") next
+    s24 = slash24(ep)
+    if (s24 == "") next
+    lossn = loss; gsub(/[^0-9]/, "", lossn); if (lossn == "") lossn = 100
+    tunpn = tunp; gsub(/[^0-9]/, "", tunpn); if (tunpn == "") tunpn = 999
+    cand_n++
+    cand_node[cand_n] = node
+    cand_ep[cand_n] = ep
+    cand_tun[cand_n] = tunp
+    cand_loss[cand_n] = loss
+    cand_loc[cand_n] = loc
+    cand_s24[cand_n] = s24
+    cand_lossn[cand_n] = lossn + 0
+    cand_tunpn[cand_n] = tunpn + 0
+  }
+
+  END {
+    for (i = 1; i <= nb; i++)
+      printf "%s|%s|%s|%s|%s\n", best_node[i], best_ep[i], best_tun[i], best_loss[i], best_loc[i] > best_out
+    close(best_out)
+
+    if (cand_n < 1 || nb < 1) exit 0
+    for (i = 1; i <= cand_n; i++) ord[i] = i
+    for (i = 2; i <= cand_n; i++) {
+      v = ord[i]
+      j = i - 1
+      while (j >= 1) {
+        a = ord[j]
+        if (cand_node[a] < cand_node[v]) break
+        if (cand_node[a] == cand_node[v] && cand_lossn[a] < cand_lossn[v]) break
+        if (cand_node[a] == cand_node[v] && cand_lossn[a] == cand_lossn[v] && cand_tunpn[a] <= cand_tunpn[v]) break
+        ord[j + 1] = a
+        j--
+      }
+      ord[j + 1] = v
+    }
+    for (k = 1; k <= cand_n; k++) {
+      i = ord[k]
+      node = cand_node[i]
+      ep = cand_ep[i]
+      s24 = cand_s24[i]
+      if (!(node in node_ok)) continue
+      if (ep in taken_ep) continue
+      if (cnt[node] >= 2) continue
+      if ((node SUBSEP s24) in used24) continue
+      used24[node SUBSEP s24] = 1
+      cnt[node]++
+      printf "%s|%s|%s|%s|%s|%s\n", node, ep, cand_tun[i], cand_loss[i], cand_loc[i], s24 > extra_out
+    }
+    close(extra_out)
+  }
+  ' "$list" || return 1
+
+  [ -s "$best_out" ]
 }
 
-# Доп. endpoint'ы из основной таблицы list (не best-per-node):
-# до 2 на каждую ноду из best, другие /24, не тот же endpoint.
-# out: NODE|ENDPOINT|TUN_PING|LOSS|LOCATION|SLASH24
-# $1=list $2=bestf $3=out
-awg_parse_extra_endpoints() {
-  list="$1"
-  bestf="$2"
-  out="$3"
-  : > "$out"
-  [ -f "$list" ] && [ -s "$bestf" ] || return 1
-
-  # уже занятые endpoint'ы и счётчик /24 на ноду
-  taken_ep="$TMPDIR/extra-taken-ep.txt"
-  : > "$taken_ep"
-  while IFS='|' read -r bn be _rest || [ -n "$bn" ]; do
-    [ -n "$be" ] && printf '%s\n' "$be" >> "$taken_ep"
-  done < "$bestf"
-
-  # ноды из best (порядок сохраняем)
-  nodesf="$TMPDIR/extra-nodes.txt"
-  cut -d'|' -f1 "$bestf" 2>/dev/null | sed '/^$/d' > "$nodesf"
-
-  in_main=0
-  in_best=0
-  while IFS= read -r line || [ -n "$line" ]; do
-    case "$line" in
-      *'Best endpoint per node'*)
-        in_best=1
-        in_main=0
-        continue
-        ;;
-      ENDPOINT[[:space:]]*)
-        # заголовок основной таблицы
-        in_main=1
-        continue
-        ;;
-    esac
-    [ "$in_best" = "1" ] && continue
-    [ "$in_main" = "1" ] || continue
-    case "$line" in
-      ''|\#*) continue ;;
-    esac
-    set -- $line
-    ep="$1"
-    case "$ep" in
-      *:* ) ;;
-      *) continue ;;
-    esac
-    # NODE — предпоследнее «слово-код» перед location (обычно $7)
-    # формат: EP ep_ping tun_ping LOSS SEEN NODE LOCATION...
-    node=$(printf '%s\n' "$line" | awk '{
-      for (i=1;i<=NF;i++) if ($i ~ /%$/) { print $(i+2); exit }
-    }')
-    [ -n "$node" ] || continue
-    # только ноды, которые есть в best
-    grep -qxF "$node" "$nodesf" 2>/dev/null || continue
-
-    # уже выбран как best?
-    grep -qxF "$ep" "$taken_ep" 2>/dev/null && continue
-
-    tunp=$(printf '%s\n' "$line" | awk '{
-      n=0
-      for (i=2;i<=NF;i++) if ($i ~ /ms$/) { n++; if (n==2) { print $i; exit } }
-    }')
-    loss=$(printf '%s\n' "$line" | awk '{
-      for (i=1;i<=NF;i++) if ($i ~ /%$/) { print $i; exit }
-    }')
-    loc=$(printf '%s\n' "$line" | awk '{
-      for (i=1;i<=NF;i++) if ($i ~ /%$/) { start=i+3; break }
-      loc=""
-      for (j=start;j<=NF;j++) loc = (loc ? loc " " : "") $j
-      print loc
-    }')
-    s24=$(_ep_to_slash24 "$ep")
-    [ -n "$s24" ] || continue
-    # loss как число для сортировки позже
-    lossn=$(printf '%s\n' "${loss:-100%}" | tr -dc '0-9')
-    [ -n "$lossn" ] || lossn=100
-    tunpn=$(printf '%s\n' "${tunp:-999ms}" | tr -dc '0-9')
-    [ -n "$tunpn" ] || tunpn=999
-    printf '%s|%s|%s|%s|%s|%s|%s|%s\n' \
-      "$node" "$ep" "${tunp:-?}" "${loss:-?}" "${loc:-}" "$s24" "$lossn" "$tunpn"
-  done < "$list" | sort -t'|' -k1,1 -k7,7n -k8,8n > "$TMPDIR/extra-all.txt"
-
-  # на ноду: до 2 endpoint'ов из разных /24
-  for node in $(cat "$nodesf"); do
-    n_ok=0
-    used24="$TMPDIR/extra-used24-$$"
-    : > "$used24"
-    while IFS='|' read -r n ep tunp loss loc s24 lossn tunpn || [ -n "$n" ]; do
-      [ "$n" = "$node" ] || continue
-      [ -n "$ep" ] || continue
-      grep -qxF "$s24" "$used24" 2>/dev/null && continue
-      printf '%s\n' "$s24" >> "$used24"
-      printf '%s|%s|%s|%s|%s|%s\n' "$node" "$ep" "$tunp" "$loss" "$loc" "$s24" >> "$out"
-      n_ok=$((n_ok + 1))
-      [ "$n_ok" -ge 2 ] && break
-    done < "$TMPDIR/extra-all.txt"
-    rm -f "$used24" 2>/dev/null || true
-  done
-  [ -s "$out" ]
+awg_parse_best_endpoints() {
+  awg_parse_list_endpoints "$1" "$2" "${TMPDIR:-/tmp}/extra-ep-discard-$$.txt"
+  rm -f "${TMPDIR:-/tmp}/extra-ep-discard-$$.txt" 2>/dev/null || true
 }
 
 # Выбор endpoint: best-per-node + до 2 доп. /24 на ноду. SELECTED_EP, SELECTED_NODE
@@ -1878,12 +1891,10 @@ awg_pick_endpoint() {
     error "Нет списка: $SCAN_OUT (сначала п. 3)."
     return 1
   fi
-  if ! awg_parse_best_endpoints "$SCAN_OUT" "$bestf"; then
-    error "Не удалось разобрать «Best endpoint per node» в $SCAN_OUT"
+  if ! awg_parse_list_endpoints "$SCAN_OUT" "$bestf" "$extraf"; then
+    error "Не удалось разобрать list: $SCAN_OUT"
     return 1
   fi
-  # доп. точки — по возможности; пустой extra не ошибка
-  awg_parse_extra_endpoints "$SCAN_OUT" "$bestf" "$extraf" 2>/dev/null || : > "$extraf"
 
   echo
   printf '%s\n' "${BOLD}Лучший endpoint по нодам (из list):${NC}"
@@ -2285,7 +2296,7 @@ check_url_via_iface() {
   mkdir -p "$TMPDIR" 2>/dev/null || true
   # http_code|time_total (сек) — показываем время ответа
   _out=$(curl -sS -o /dev/null -w '%{http_code}|%{time_total}' \
-    --connect-timeout 5 --max-time 10 \
+    --connect-timeout 3 --max-time 4 \
     --interface "$ifc" -L "$url" 2>"$errf") || true
   code=$(printf '%s' "$_out" | cut -d'|' -f1 | tr -d '\r\n ')
   _sec=$(printf '%s' "$_out" | cut -d'|' -f2 | tr -d '\r\n ')
@@ -2334,7 +2345,12 @@ run_iface_probes() {
   _probe_ok=0
   check_url_via_iface "$1" "https://2ip.io/" "2ip.io" && _probe_ok=$((_probe_ok + 1))
   check_url_via_iface "$1" "https://www.google.com/" "google.com" && _probe_ok=$((_probe_ok + 1))
-  check_url_via_iface "$1" "https://web.telegram.org/" "web.telegram.org" && _probe_ok=$((_probe_ok + 1))
+  # web.telegram.org часто режется; fallback на telegram.org
+  if check_url_via_iface "$1" "https://web.telegram.org/" "web.telegram.org"; then
+    _probe_ok=$((_probe_ok + 1))
+  elif check_url_via_iface "$1" "https://telegram.org/" "telegram.org"; then
+    _probe_ok=$((_probe_ok + 1))
+  fi
 }
 
 list_tunnel_ifaces() {
