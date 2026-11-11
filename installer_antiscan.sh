@@ -1043,6 +1043,7 @@ chain_rules_check() {
     if [ "$2" = "1" ]; then
       _need_rule "$dump" '--match-set ascn_subnets src -j DROP' "$c:DROP-ascn_subnets"
       _need_rule "$dump" '--match-set ascn_ips src -j DROP' "$c:DROP-ascn_ips"
+      _need_rule "$dump" '-j SET --add-set ascn_candidates src' "$c:SET-ascn_candidates"
       _need_rule "$dump" '-m connlimit .*-j SET --add-set ascn_ips src' "$c:connlimit"
       _need_rule "$dump" '-m recent --update .*-j SET --add-set ascn_ips src' "$c:recent-update"
       _need_rule "$dump" '-m recent --set .*--name scanners' "$c:recent-set"

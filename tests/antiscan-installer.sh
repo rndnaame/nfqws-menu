@@ -213,7 +213,7 @@ fill_chain() {
         echo "-A ANTISCAN -m set --match-set ascn_subnets src -j DROP"
         echo "-A ANTISCAN -m set --match-set ascn_ips src -j DROP"
       fi
-      echo "-A ANTISCAN -j SET --add-set ascn_candidates src"
+      [ -f "$S/fill_no_candidates" ] || echo "-A ANTISCAN -j SET --add-set ascn_candidates src"
       if [ ! -f "$S/fill_partial" ]; then
         echo "-A ANTISCAN -m connlimit --connlimit-above 20 --connlimit-mask 32 --connlimit-saddr -j SET --add-set ascn_ips src"
         echo "-A ANTISCAN -m conntrack --ctstate NEW -m recent --update --seconds 30 --hitcount 15 --name scanners --mask 255.255.255.255 --rsource -j SET --add-set ascn_ips src"
@@ -682,6 +682,16 @@ touch "$T/state/fill_partial"
 run 'ppp0\n\n\ny\ny\ny\n' do_configure
 check '[ "$rc" -ne 0 ] && out_has "connlimit" && out_has "recent-update" && ! out_has "DROP-ascn_ips" && ! out_has "на месте"' "частичная цепочка не обнаружена: rc=$rc"
 
+# Нет сбора кандидатов в подсети (распределённые сканеры)
+setup chain_no_candidates
+preinstall
+mkdir -p "$T/sysnet/ppp0"
+start_ascn
+touch "$T/state/fill_no_candidates"
+run 'ppp0\n\n\ny\ny\ny\n' do_configure
+check '[ "$rc" -ne 0 ] && out_has "ANTISCAN:SET-ascn_candidates" && ! out_has "DROP-ascn_ips" && ! out_has "на месте"' "нет правила ascn_candidates не обнаружено: rc=$rc"
+check_firewall_readonly
+
 # Honeypot: норма и пустая ANTISCAN_HONEYPOT
 setup honeypot_ok
 preinstall
@@ -709,7 +719,8 @@ printf 'ISP_INTERFACES="eth3"\nPORTS="22"\nPORTS_FORWARDED=""\nENABLE_IPS_BAN="0
 mkdir -p "$T/sysnet/ppp0"
 start_ascn
 run 'ppp0\n\n\ny\n' do_configure
-check '[ "$rc" -eq 0 ] && out_has "на месте"' "ложная тревога при ENABLE_IPS_BAN=0: rc=$rc"
+check '[ "$rc" -eq 0 ] && out_has "на месте" && ! out_has "ascn_candidates"' "ложная тревога при ENABLE_IPS_BAN=0: rc=$rc"
+check '! grep -q ascn_candidates "$T/state/chain"' "модель: при ENABLE_IPS_BAN=0 правило кандидатов не создаётся"
 
 # Прежний индекс не удалось отложить — свежесть не подтверждена, не принимаем
 setup cached_index_unmovable
