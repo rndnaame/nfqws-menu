@@ -78,7 +78,7 @@ menu
 1. Определяет архитектуру: `opkg print-architecture` (основной) → при ошибке `/opt/etc/opkg.conf` → fallback `uname -m`. На части Keenetic `uname`/RCI отдают `mips` вместо `mipsel` — поэтому opkg приоритетнее.
 2. Заголовок: **Модель / Title / ARCH** из RCI (`/rci/show/version`). ARCH зелёный (из opkg) или жёлтый (из conf/uname). Если в RCI нет `opkg-kmod-netfilter` — красное предупреждение установить «Модули ядра подсистемы Netfilter».
 3. Показывает **только установленные** компоненты (версии и статус) одним проходом awk по **opkg status** + **ps** + кэш обновлений (без `opkg list-installed` на каждом кадре):
-   - nfqws / nfqws2 / web / **nfqws2-ui**, usque-keenetic, **firc**, magitrickle, **tg-ws-proxy-rs**;
+   - nfqws / nfqws2 / web / **nfqws2-ui**, usque-keenetic, **firc**, **antiscan** (⚡ по `/tmp/ascn.run`), magitrickle, **tg-ws-proxy-rs**;
    - dpi-detector, awg-manager (⚡ при sing-box / amneziawg), KeenKit, telemt / telemt-panel, opera-proxy, cron, dropbear и др. init.d;
    - **⚡** — сервис запущен; **⭡** — доступна более новая версия (фоновая проверка, **TTL 10 мин**, перерисовка меню без Enter).
 4. Интерфейс **RU / EN** (пункт **77**): подписи меню и общие промпты (`Your choice [0]:` / `Ваш выбор [0]:`). Подпись `Language: RU|EN` всегда латиницей (удобно для Telnet).
@@ -108,6 +108,7 @@ menu
       16. TG WS Proxy Rust
       17. firc
       18. warpscout
+      19. Antiscan
 
 [::]  СЕРВИС [S]  |  Language: RU|EN [77]
       88. Удаление пакетов
@@ -463,6 +464,50 @@ curl -fsSL https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/installer_
 5. **Применить conf в awg-manager** — выбор endpoint (*Best endpoint per node*) → `Endpoint`/свободный `Address` → **replace** или import; имя `WARP-ARN` / `WARP-DME`; после — `start`
 6. **Проверка туннеля** — интерфейс `nwg*`/`awg*` → HTTP-пробы + Cloudflare `cdn-cgi/trace`
 7. **Удаление** — бинарник; по подтверждению аккаунт, list, conf, junk
+
+### 19. Antiscan
+
+[Antiscan](https://github.com/dimon27254/antiscan) (автор — dimon27254) блокирует IP, которые сканируют порты роутера или подбирают пароли: много соединений с одного адреса, единичные соединения с многих адресов одной подсети /24, плюс опционально пользовательские списки, геоблокировка, honeypot и списки NDMS `ip lockout-policy`.
+
+> **Только IPv4 и только TCP.** IPv6 и UDP (например WireGuard) Antiscan не защищает.
+
+Через `installer_antiscan.sh` (пункт меню **19** или напрямую):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/installer_antiscan.sh | sh
+```
+
+**Требования:** Entware, компонент «Модули ядра подсистемы Netfilter» (`opkg-kmod-netfilter`; до KeeneticOS 4.3 — вместе с «Протокол IPv6»). На KeeneticOS 5.2+ Antiscan при первом запуске попросит **токен доступа RCI** (создаётся в веб-интерфейсе или CLI роутера; позже — `antiscan token set`). Зависимости пакета: `ipset`, `iptables`, `curl`, `jq`, `cron`.
+
+Меню:
+
+1. **Установить** — проверка компонента Netfilter (RCI `show version`, иначе по модулям `xt_recent`/`xt_multiport`), репозиторий `src/gz antiscan https://dimon27254.github.io/antiscan/all` → `/opt/etc/opkg/antiscan.conf`, `opkg update`, `opkg install antiscan`. Уже настроенный репозиторий (в т.ч. зеркало) не перезаписывается; при недоступности можно явно выбрать зеркало `https://bin.antiscan.ru/packages/all`. Установленный пакет не переустанавливается, `--force-reinstall` и `curl | sh` не используются. Если нет `wget-ssl` / `ca-bundle` — предлагается их установить (как в официальном `install.sh`).
+2. **Статус и версия** — opkg, репозиторий, служба, hook, текущие интерфейсы/порты, `antiscan status`.
+3. **Запуск / остановка / перезапуск** — `antiscan start | stop | restart` с проверкой результата.
+4. **WAN-интерфейсы и TCP-порты** — меняет только `ISP_INTERFACES`, `PORTS`, `PORTS_FORWARDED` (бэкап `ascn.conf.bak.*`, остальные строки не трогаются), затем `antiscan reload`.
+5. **Открыть конфигурацию** — `antiscan edit config` (nano / vim / vi; Antiscan сам проверяет файл и применяет его).
+6. **Заблокированные IP и подсети** — `antiscan list ips | subnets` (+ `honeypot` / `ndm_lockout`, если включены).
+7. **Обновить** — `opkg upgrade antiscan` только при наличии новой версии; настройки сохраняются (conffiles), перед обновлением бэкап.
+8. **Удалить** — подтверждение, `antiscan stop`, `opkg remove antiscan` (prerm/postrm убирают службу, symlink и задачи cron). Настройки по выбору копируются в `/opt/etc/antiscan-backup-*` или удаляются (только известные файлы Antiscan). Зависимости и другие пакеты не удаляются, `--autoremove` не используется.
+
+**Первая настройка.** Пакет запускает Antiscan сразу после установки со значениями по умолчанию (`ISP_INTERFACES="eth3"`, порты `22,80,443`). Поэтому установщик сразу предлагает настройку; если `eth3` не похож на WAN этого роутера — предлагает остановить Antiscan до настройки. Существующий `ascn.conf` (не по умолчанию) никогда не меняется автоматически.
+
+- **ISP_INTERFACES** — unix-имена интернет-подключений (`eth3`, `ppp0`, `eth2.2`, …; до 10). Подсказка строится из маршрутов `default` и интерфейсов RCI с `global: true` (`show interface <имя> system-name`), но сохраняется только то, что подтвердил пользователь. Если ничего не найдено — ручной ввод.
+- **PORTS** — TCP-порты служб **самого роутера**, доступных из интернета.
+- **PORTS_FORWARDED** — порты **назначения на устройстве LAN** (поле «Направлять на порт»), а не внешний порт правила. Antiscan проверяет их в `FORWARD`, уже после DNAT.
+
+Ввод проверяется по тем же правилам, что и в Antiscan (имена `[a-zA-Z][a-zA-Z0-9_.:-]{1,14}`, порты `1–65535`, до 15, диапазоны `N:M`); значения не исполняются и не передаются в `eval`. Honeypot, геоблокировка и прочие режимы установщиком не включаются.
+
+**Совместимость с nfqws / nfqws2.** Antiscan добавляет правила только в таблицу `filter` (цепочки `ANTISCAN` / `ANTISCAN_HONEYPOT`, переходы из `INPUT`/`FORWARD` по `-i <WAN> -p tcp --dports …`) и восстанавливает их hook-ом `/opt/etc/ndm/netfilter.d/099-ascn.sh` только для `table=filter`. nfqws-keenetic и nfqws2-keenetic работают в таблицах `mangle`/`nat` и их hook обрабатывает только `mangle`/`nat`, поэтому правила не пересекаются и перезапуск nfqws не нужен. Установщик сам iptables/ipset не изменяет (при удалении только читает, осталась ли цепочка `ANTISCAN`).
+
+**Ограничения и риски:**
+
+- Лимиты (по умолчанию 20 одновременных / 15 новых соединений за 30 с) действуют на все адреса, включая ваши: удалённое администрирование, VPN-клиенты поверх TCP, сервисы за пробросом с множеством соединений (веб-сервер, NAS, торрент-порт) могут попасть в блокировку на 10 суток. Доверенные адреса добавляйте в `ascn_custom_exclude.txt` (`antiscan edit custom_exclude`, `USE_CUSTOM_EXCLUDE_LIST="1"`). Установщик предупреждает, если вы подключены по SSH извне.
+- Если в `ISP_INTERFACES` указан VPN/туннель, лимиты действуют и на входящие соединения через него.
+- Диапазоны портов, пересекающиеся с 32768–60999, захватывают ответы на исходящие соединения — установщик предупреждает об этом.
+- `antiscan stop` / `restart` снимают накопленные блокировки, если не включено `SAVE_IPSETS`.
+- `postinst` пакета при отсутствии каталога crontabs настраивает и запускает cron (меняет `/opt/etc/init.d/S10cron`) — это поведение самого пакета.
+- Проверено на заглушках (`tests/antiscan-installer.sh`); на реальном роутере установщик не тестировался автором интеграции.
 
 ### 77. Change language
 

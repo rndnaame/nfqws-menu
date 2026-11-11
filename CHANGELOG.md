@@ -2,6 +2,12 @@
 
 История изменений **nfqws-menu**. Актуальная версия скрипта — в [`README.md`](README.md).
 
+### Не выпущено
+
+- **п. 19 Antiscan** — `installer_antiscan.sh`: установка из opkg-репозитория [Antiscan](https://github.com/dimon27254/antiscan) (зеркало — по выбору), проверка компонента Netfilter, статус, start/stop/restart, настройка `ISP_INTERFACES` / `PORTS` / `PORTS_FORWARDED` с подсказкой WAN и бэкапом, `antiscan edit config`, списки блокировки, обновление и удаление
+- **show_installed** — строка `antiscan` (⚡ по `/tmp/ascn.run`), `S99ascn` не дублируется в «прочие init.d»
+- тесты: `tests/antiscan-installer.sh` (заглушки opkg / RCI / iptables / ipset)
+
 ### 0.10.26
 
 - **show_installed** — оптимизация: `emit_opkg`, без `opkg list-installed` / `command -v dpi-detector`; telemt-panel версия из status-кэша; тот же порядок строк
