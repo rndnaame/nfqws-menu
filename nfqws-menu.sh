@@ -10,7 +10,7 @@
 
 set -e
 
-SCRIPT_VERSION="0.10.36"
+SCRIPT_VERSION="0.10.37"
 
 REPO_URL="https://github.com/rndnaame/nfqws-menu"
 RAW_BASE="https://raw.githubusercontent.com/rndnaame/nfqws-menu/main"
