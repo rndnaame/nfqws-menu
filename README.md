@@ -267,17 +267,35 @@ menu
 
 | № | Описание |
 | --- | --- |
-| 1 | CleanBrowsing DoT → instagram.com |
-| 2 | CleanBrowsing DoH → instagram.com |
-| 3 | CleanBrowsing DoT → cdninstagram.com |
-| 4 | CleanBrowsing DoH → cdninstagram.com |
-| 5 | sw.ext.io DoT → rutor.is & rutor.info |
-| 6 | Malw Link DoH → ntc.party |
-| 7 | Xbox-DNS DoT → gql.twitch.tv & usher.ttvnw.net |
-| 8 | Xbox-DNS DoH → gql.twitch.tv & usher.ttvnw.net |
-| 9 | NullsProxy DoT → Supercell (supercell.com, supercellid.com, brawlstarsgame.com, clashofclans.com, clashroyaleapp.com) |
-| 10 | NullsProxy DoH → те же домены Supercell |
-| 11 | Ввести свой домен и выбрать сервер |
+| 1 | Яндекс DoT (77.88.8.8) → .ru / .su / .рф |
+| 2 | CleanBrowsing DoT → instagram.com |
+| 3 | CleanBrowsing DoH → instagram.com |
+| 4 | CleanBrowsing DoT → cdninstagram.com |
+| 5 | CleanBrowsing DoH → cdninstagram.com |
+| 6 | sw.ext.io DoT → rutor.is & rutor.info |
+| 7 | Malw Link DoH → ntc.party |
+| 8 | Xbox-DNS DoT → gql.twitch.tv & usher.ttvnw.net |
+| 9 | Xbox-DNS DoH → gql.twitch.tv & usher.ttvnw.net |
+| 10 | NullsProxy DoT → Supercell (supercell.com, supercellid.com, brawlstarsgame.com, clashofclans.com, clashroyaleapp.com) |
+| 11 | NullsProxy DoH → те же домены Supercell |
+| 12 | Ввести свой домен и выбрать сервер |
+
+Можно выбрать несколько пресетов через запятую (например, `1,2,4`) — конфигурация сохраняется один раз.
+
+**Пресет 1 — Яндекс DoT для российских зон.** Одним действием привязывает три доменные зоны к базовому Яндекс DNS (без семейной фильтрации) по DNS-over-TLS: `77.88.8.8`, порт `853`, SNI `common.dot.dns.yandex.net`.
+
+```
+dns-proxy tls upstream 77.88.8.8 853 sni common.dot.dns.yandex.net domain ru
+dns-proxy tls upstream 77.88.8.8 853 sni common.dot.dns.yandex.net domain su
+dns-proxy tls upstream 77.88.8.8 853 sni common.dot.dns.yandex.net domain xn--p1ai
+```
+
+- `.рф` передаётся в Punycode — `xn--p1ai`.
+- DNS выбирается **по доменной зоне** имени, а не по расположению сервера: сайт в `.ru`, размещённый за рубежом, пойдёт через Яндекс, а российский сервис в `.com` (например, `vk.com`) — нет.
+- Остальные домены по-прежнему разрешаются текущими DNS-серверами роутера; общий DNS, другие серверы и привязки не меняются и не удаляются.
+- Если `ndmc` вернул ошибку для какой-либо зоны, меню называет эту зону и не сообщает об успехе; успешно привязанные зоны сохраняются.
+- Повторный выбор отправляет те же три команды, без удаления существующих записей.
+- Проверено на заглушке `ndmc` (`tests/dns-domain-presets.sh`); на реальном роутере пресет не тестировался автором.
 
 - Удаление upstream-ов с сохранением конфигурации
 

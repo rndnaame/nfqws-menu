@@ -7,6 +7,8 @@
 - **п. 19 Antiscan** — `installer_antiscan.sh`: установка из opkg-репозитория [Antiscan](https://github.com/dimon27254/antiscan) (зеркало — по выбору), проверка компонента Netfilter, статус, start/stop/restart, настройка `ISP_INTERFACES` / `PORTS` / `PORTS_FORWARDED` с подсказкой WAN и бэкапом, `antiscan edit config`, списки блокировки, обновление и удаление
 - **show_installed** — строка `antiscan` (⚡ по `/tmp/ascn.run`), `S99ascn` не дублируется в «прочие init.d»
 - тесты: `tests/antiscan-installer.sh` (заглушки opkg / RCI / iptables / ipset) по поведению Antiscan 1.10.6: состояние правил, `/tmp/ascn.lock`, кэш индексов opkg
+- **п. 8 DoT/DoH → Пресеты** — новый пресет **1) Яндекс DoT (77.88.8.8) → .ru / .su / .рф** (`.рф` = `xn--p1ai`, SNI `common.dot.dns.yandex.net`, порт 853); прежние пресеты сдвинуты на +1 без изменения команд. Ошибка `ndmc` по зоне показывается и не выдаётся за успех (`apply_dot` возвращает код ошибки). То же в отдельном `menu-dns.sh`, где `save_config` больше не пишет `[ГОТОВО]` при ошибке сохранения
+- тесты: `tests/dns-domain-presets.sh` (заглушка `ndmc`) — команды пресетов, мультивыбор, отмена, повтор, частичный сбой, ошибка сохранения
 
 ### 0.10.26
 
