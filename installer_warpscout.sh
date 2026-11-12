@@ -19,7 +19,7 @@
 #   sh installer_warpscout.sh
 #   curl -fsSL https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/installer_warpscout.sh | sh
 
-SCRIPT_VERSION="0.1.72"
+SCRIPT_VERSION="0.1.73"
 
 # ANSI (portable для ash/BusyBox)
 RED=$(printf '\033[0;31m')
@@ -1897,41 +1897,49 @@ awg_pick_endpoint() {
   fi
 
   echo
-  printf '%s\n' "${BOLD}Лучший endpoint по нодам (из list):${NC}"
+  # Двухстрочный формат — не ломается на узком экране телефона
+  printf '%s\n' "${BOLD}Лучший endpoint по нодам:${NC}"
   i=0
   while IFS='|' read -r node ep tunp loss loc || [ -n "$node" ]; do
     [ -n "$node" ] || continue
     i=$((i + 1))
     mark=""
     case "$node" in
-      DME) mark=" ${YELLOW}(часто DPI)${NC}" ;;
+      DME) mark="${YELLOW}DPI${NC}" ;;
     esac
-    printf '  %s%d)%s  %s%-4s%s  %s  %s[tun %s · loss %s]%s  %s%s\n' \
-      "$BOLD" "$i" "$NC" "$CYAN" "$node" "$NC" "$ep" \
-      "$DIM" "$tunp" "$loss" "$NC" "${loc}" "$mark"
+    printf '  %s%d)%s %s%s%s  %s\n' "$BOLD" "$i" "$NC" "$CYAN" "$node" "$NC" "$ep"
+    printf '      %s%s · loss %s%s' "$DIM" "$tunp" "$loss" "$NC"
+    [ -n "$loc" ] && printf ' · %s' "$loc"
+    [ -n "$mark" ] && printf ' · %s' "$mark"
+    printf '\n'
     printf '%s|%s\n' "$node" "$ep" >> "$menuf"
   done < "$bestf"
 
   if [ -s "$extraf" ]; then
     echo
-    printf '%s\n' "${BOLD}Дополнительные точки (другие /24):${NC}"
+    printf '%s\n' "${BOLD}Доп. точки (другие /24):${NC}"
     while IFS='|' read -r node ep tunp loss loc s24 || [ -n "$node" ]; do
       [ -n "$ep" ] || continue
       i=$((i + 1))
       mark=""
       case "$node" in
-        DME) mark=" ${YELLOW}(часто DPI)${NC}" ;;
+        DME) mark="${YELLOW}DPI${NC}" ;;
       esac
-      printf '  %s%d)%s  %s%-15s%s  %s  %s[tun %s · loss %s]%s  %s %s%s\n' \
-        "$BOLD" "$i" "$NC" "$DIM" "${s24:-?}" "$NC" "$ep" \
-        "$DIM" "$tunp" "$loss" "$NC" "$node" "${loc}" "$mark"
+      printf '  %s%d)%s %s%s%s\n' "$BOLD" "$i" "$NC" "$DIM" "${s24:-?}" "$NC"
+      printf '      %s  %s%s · loss %s%s · %s' "$ep" "$DIM" "$tunp" "$loss" "$NC" "$node"
+      [ -n "$loc" ] && printf ' · %s' "$loc"
+      [ -n "$mark" ] && printf ' · %s' "$mark"
+      printf '\n'
       printf '%s|%s\n' "$node" "$ep" >> "$menuf"
     done < "$extraf"
   fi
 
   # текущий Endpoint из conf
   cur=$(grep -iE '^[[:space:]]*Endpoint[[:space:]]*=' "$CONF_OUT" 2>/dev/null | head -1 | sed 's/^[^=]*=[[:space:]]*//;s/[[:space:]]*$//')
-  [ -n "$cur" ] && printf '%s\n' "${DIM}  сейчас в conf: Endpoint = ${cur}${NC}"
+  if [ -n "$cur" ]; then
+    echo
+    printf '%s\n' "${DIM}сейчас в conf:${NC} $cur"
+  fi
 
   echo "  0) Отмена"
   echo
