@@ -19,7 +19,7 @@
 #   sh installer_warpscout.sh
 #   curl -fsSL https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/installer_warpscout.sh | sh
 
-SCRIPT_VERSION="0.1.73"
+SCRIPT_VERSION="0.1.75"
 
 # ANSI (portable для ash/BusyBox)
 RED=$(printf '\033[0;31m')
@@ -1663,88 +1663,6 @@ awg_ensure_free_address() {
   return 1
 }
 
-# Разбор секции «Best endpoint per node» из list → файл: NODE|ENDPOINT|TUN_PING|LOSS|LOCATION
-# Пример строки:
-# ARN    188.114.96.199:2408    27ms          25ms      0%     RU         Stockholm, SE
-awg_parse_best_endpoints() {
-  list="$1"
-  out="$2"
-  : > "$out"
-  [ -f "$list" ] || return 1
-
-  in_best=0
-  while IFS= read -r line || [ -n "$line" ]; do
-    case "$line" in
-      *'Best endpoint per node'*)
-        in_best=1
-        continue
-        ;;
-    esac
-    [ "$in_best" = "1" ] || continue
-    # пропускаем заголовок таблицы и пустые
-    case "$line" in
-      ''|\#*) continue ;;
-      NODE[[:space:]]*) continue ;;
-    esac
-    # NODE ENDPOINT ... LOSS SEEN NODE_LOCATION...
-    # awk: $1=NODE $2=ENDPOINT $5=LOSS $7+=location (после SEEN AS)
-    set -- $line
-    node="$1"
-    ep="$2"
-    # минимум: NODE + ip:port
-    [ -n "$node" ] && [ -n "$ep" ] || continue
-    case "$ep" in
-      *:* ) ;;
-      *) continue ;;
-    esac
-    # tun ping / loss — позиции зависят от выравнивания; ищем LOSS как *%
-    loss=""
-    tunp=""
-    loc=""
-    # проход по полям
-    i=0
-    for f in $line; do
-      i=$((i + 1))
-      case "$f" in
-        *ms)
-          # первое *ms после endpoint — ENDPOINT PING, второе — TUN PING
-          if [ -z "$tunp" ]; then
-            # пропускаем endpoint ping (первое ms после ep)
-            if [ "$i" -gt 2 ]; then
-              if [ -z "$_ep_ping" ]; then
-                _ep_ping="$f"
-              else
-                tunp="$f"
-              fi
-            fi
-          fi
-          ;;
-        *%)
-          [ -z "$loss" ] && loss="$f"
-          ;;
-      esac
-    done
-    # location: всё после SEEN AS (обычно 2-буквенный код страны)
-    # проще: с конца — NODE LOCATION = поля после LOSS и SEEN
-    loc=$(printf '%s\n' "$line" | awk '{
-      # найти поле с % (LOSS), следующее — SEEN AS, остальное — location
-      for (i=1;i<=NF;i++) if ($i ~ /%$/) { start=i+2; break }
-      loc=""
-      for (j=start;j<=NF;j++) loc = (loc ? loc " " : "") $j
-      print loc
-    }')
-    tunp=$(printf '%s\n' "$line" | awk '{
-      n=0
-      for (i=3;i<=NF;i++) if ($i ~ /ms$/) { n++; if (n==2) { print $i; exit } }
-    }')
-    loss=$(printf '%s\n' "$line" | awk '{
-      for (i=1;i<=NF;i++) if ($i ~ /%$/) { print $i; exit }
-    }')
-    _ep_ping=""
-    printf '%s|%s|%s|%s|%s\n' "$node" "$ep" "${tunp:-?}" "${loss:-?}" "${loc:-}" >> "$out"
-  done < "$list"
-  [ -s "$out" ]
-}
 
 # Быстрый разбор list (один awk):
 #   best_out  → NODE|ENDPOINT|TUN_PING|LOSS|LOCATION
@@ -1872,11 +1790,6 @@ awg_parse_list_endpoints() {
   [ -s "$best_out" ]
 }
 
-awg_parse_best_endpoints() {
-  awg_parse_list_endpoints "$1" "$2" "${TMPDIR:-/tmp}/extra-ep-discard-$$.txt"
-  rm -f "${TMPDIR:-/tmp}/extra-ep-discard-$$.txt" 2>/dev/null || true
-}
-
 # Выбор endpoint: best-per-node + до 2 доп. /24 на ноду. SELECTED_EP, SELECTED_NODE
 awg_pick_endpoint() {
   SELECTED_EP=""
@@ -1917,7 +1830,7 @@ awg_pick_endpoint() {
 
   if [ -s "$extraf" ]; then
     echo
-    printf '%s\n' "${BOLD}Доп. точки (другие /24):${NC}"
+    printf '%s\n' "${BOLD}Доп. точки:${NC}"
     while IFS='|' read -r node ep tunp loss loc s24 || [ -n "$node" ]; do
       [ -n "$ep" ] || continue
       i=$((i + 1))
@@ -1925,8 +1838,8 @@ awg_pick_endpoint() {
       case "$node" in
         DME) mark="${YELLOW}DPI${NC}" ;;
       esac
-      printf '  %s%d)%s %s%s%s\n' "$BOLD" "$i" "$NC" "$DIM" "${s24:-?}" "$NC"
-      printf '      %s  %s%s · loss %s%s · %s' "$ep" "$DIM" "$tunp" "$loss" "$NC" "$node"
+      printf '  %s%d)%s %s%s%s  %s\n' "$BOLD" "$i" "$NC" "$CYAN" "$node" "$NC" "$ep"
+      printf '      %s%s · loss %s%s' "$DIM" "$tunp" "$loss" "$NC"
       [ -n "$loc" ] && printf ' · %s' "$loc"
       [ -n "$mark" ] && printf ' · %s' "$mark"
       printf '\n'
