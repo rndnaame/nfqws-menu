@@ -318,11 +318,12 @@ add_doh_menu() {
 add_domain_menu() {
     echo ""
     echo -e "${C_BOLD}Быстрая привязка DNS к целевым доменам (можно несколько через запятую, напр. 1,3,4):${C_RESET}"
-    echo " 1) CleanBrowsing DoT (185.228.168.9 + SNI) ➔ instagram.com"
-    echo " 2) CleanBrowsing DoH (doh.cleanbrowsing.org) ➔ instagram.com"
-    echo " 3) sw.ext.io DoT ➔ rutor.is & rutor.info"
-    echo " 4) Malw Link DoH (dns.malw.link) ➔ ntc.party"
-    echo " 5) Ввести свой домен и выбрать сервер"
+    echo " 1) Яндекс DoT (77.88.8.8) ➔ .ru / .su / .рф"
+    echo " 2) CleanBrowsing DoT (185.228.168.9 + SNI) ➔ instagram.com"
+    echo " 3) CleanBrowsing DoH (doh.cleanbrowsing.org) ➔ instagram.com"
+    echo " 4) sw.ext.io DoT ➔ rutor.is & rutor.info"
+    echo " 5) Malw Link DoH (dns.malw.link) ➔ ntc.party"
+    echo " 6) Ввести свой домен и выбрать сервер"
     echo " 0) Отмена"
     echo -e "${C_DIM}────────────────────────────────────────────────────────${C_RESET}"
     read -p "Выберите варианты: " raw_choices
@@ -331,27 +332,45 @@ add_domain_menu() {
 
     clean_choices=$(echo "$raw_choices" | tr ',' ' ')
     added_any=0
+    failed_any=0
 
     for choice in $clean_choices; do
         case $choice in
             1)
+                # Яндекс DoT (базовый) для зон .ru, .su, .рф; .рф — в Punycode (xn--p1ai)
+                yandex_failed=""
+                for zone in ru su xn--p1ai; do
+                    if apply_dot "77.88.8.8" "common.dot.dns.yandex.net" "$zone" "853"; then
+                        added_any=1
+                    else
+                        yandex_failed="$yandex_failed $zone"
+                    fi
+                done
+                if [ -n "$yandex_failed" ]; then
+                    echo -e "${C_RED}Ошибка ndmc: Яндекс DoT не привязан к зонам:${yandex_failed}${C_RESET}"
+                    failed_any=1
+                else
+                    echo -e "${C_GREEN}Яндекс DoT привязан к зонам .ru, .su, .рф${C_RESET}"
+                fi
+                ;;
+            2)
                 apply_dot "185.228.168.9" "security-filter-dns.cleanbrowsing.org" "instagram.com" "853"
                 added_any=1
                 ;;
-            2)
+            3)
                 apply_doh "https://doh.cleanbrowsing.org/doh/security-filter/" "instagram.com"
                 added_any=1
                 ;;
-            3)
+            4)
                 apply_dot "sw.ext.io" "" "rutor.is"
                 apply_dot "sw.ext.io" "" "rutor.info"
                 added_any=1
                 ;;
-            4)
+            5)
                 apply_doh "https://dns.malw.link/dns-query" "ntc.party"
                 added_any=1
                 ;;
-            5)
+            6)
                 read -p "Введите домен (например: example.com): " dom
                 if [ -n "$dom" ]; then
                     echo "Тип протокола: 1) DoT  2) DoH"
@@ -376,6 +395,7 @@ add_domain_menu() {
         esac
     done
 
+    [ "$failed_any" -eq 1 ] && sleep 2
     [ "$added_any" -eq 1 ] && save_config
 }
 

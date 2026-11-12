@@ -3638,47 +3638,65 @@ add_doh_menu() {
 add_domain_menu() {
   echo
   printf '%s\n' "${BOLD}Быстрая привязка DNS к целевым доменам (можно несколько через запятую, напр. 1,3,5):${NC}"
-  echo " 1) CleanBrowsing DoT (185.228.168.9 + SNI) ➔ instagram.com"
-  echo " 2) CleanBrowsing DoH (doh.cleanbrowsing.org) ➔ instagram.com"
-  echo " 3) CleanBrowsing DoT (185.228.168.9 + SNI) ➔ cdninstagram.com"
-  echo " 4) CleanBrowsing DoH (doh.cleanbrowsing.org) ➔ cdninstagram.com"
-  echo " 5) sw.ext.io DoT ➔ rutor.is & rutor.info"
-  echo " 6) Malw Link DoH (dns.malw.link) ➔ ntc.party"
-  echo " 7) Xbox-DNS DoT ➔ gql.twitch.tv & usher.ttvnw.net"
-  echo " 8) Xbox-DNS DoH ➔ gql.twitch.tv & usher.ttvnw.net"
-  echo " 9) NullsProxy DoT ➔ Supercell (Brawl/CoC/CR)"
-  echo "10) NullsProxy DoH ➔ Supercell (Brawl/CoC/CR)"
-  echo "11) Ввести свой домен и выбрать сервер"
+  echo " 1) Яндекс DoT (77.88.8.8) ➔ .ru / .su / .рф"
+  echo " 2) CleanBrowsing DoT (185.228.168.9 + SNI) ➔ instagram.com"
+  echo " 3) CleanBrowsing DoH (doh.cleanbrowsing.org) ➔ instagram.com"
+  echo " 4) CleanBrowsing DoT (185.228.168.9 + SNI) ➔ cdninstagram.com"
+  echo " 5) CleanBrowsing DoH (doh.cleanbrowsing.org) ➔ cdninstagram.com"
+  echo " 6) sw.ext.io DoT ➔ rutor.is & rutor.info"
+  echo " 7) Malw Link DoH (dns.malw.link) ➔ ntc.party"
+  echo " 8) Xbox-DNS DoT ➔ gql.twitch.tv & usher.ttvnw.net"
+  echo " 9) Xbox-DNS DoH ➔ gql.twitch.tv & usher.ttvnw.net"
+  echo "10) NullsProxy DoT ➔ Supercell (Brawl/CoC/CR)"
+  echo "11) NullsProxy DoH ➔ Supercell (Brawl/CoC/CR)"
+  echo "12) Ввести свой домен и выбрать сервер"
   echo " 0) Отмена"
   printf '%s\n' "${DIM}────────────────────────────────────────────────────────${NC}"
   ask "Выберите варианты: "
   read -r raw_choices
   [ -z "$raw_choices" ] || [ "$raw_choices" = "0" ] && return
 
-  local added_any=0 choice
+  local added_any=0 failed_any=0 choice zone yandex_failed
   for choice in $(echo "$raw_choices" | tr ',' ' '); do
     case $choice in
-      1) apply_dot "185.228.168.9" "security-filter-dns.cleanbrowsing.org" "instagram.com" "853"; added_any=1 ;;
-      2) apply_doh "https://doh.cleanbrowsing.org/doh/security-filter/" "instagram.com"; added_any=1 ;;
-      3) apply_dot "185.228.168.9" "security-filter-dns.cleanbrowsing.org" "cdninstagram.com" "853"; added_any=1 ;;
-      4) apply_doh "https://doh.cleanbrowsing.org/doh/security-filter/" "cdninstagram.com"; added_any=1 ;;
-      5)
+      1)
+        # Яндекс DoT (базовый) для зон .ru, .su, .рф; .рф — в Punycode (xn--p1ai)
+        yandex_failed=""
+        for zone in ru su xn--p1ai; do
+          if apply_dot "77.88.8.8" "common.dot.dns.yandex.net" "$zone" "853"; then
+            added_any=1
+          else
+            yandex_failed="$yandex_failed $zone"
+          fi
+        done
+        if [ -n "$yandex_failed" ]; then
+          error "Яндекс DoT не привязан к зонам:$yandex_failed"
+          failed_any=1
+        else
+          info "Яндекс DoT привязан к зонам .ru, .su, .рф"
+        fi
+        ;;
+      2) apply_dot "185.228.168.9" "security-filter-dns.cleanbrowsing.org" "instagram.com" "853"; added_any=1 ;;
+      3) apply_doh "https://doh.cleanbrowsing.org/doh/security-filter/" "instagram.com"; added_any=1 ;;
+      4) apply_dot "185.228.168.9" "security-filter-dns.cleanbrowsing.org" "cdninstagram.com" "853"; added_any=1 ;;
+      5) apply_doh "https://doh.cleanbrowsing.org/doh/security-filter/" "cdninstagram.com"; added_any=1 ;;
+      6)
         apply_dot "sw.ext.io" "" "rutor.is"
         apply_dot "sw.ext.io" "" "rutor.info"
         added_any=1
         ;;
-      6) apply_doh "https://dns.malw.link/dns-query" "ntc.party"; added_any=1 ;;
-      7)
+      7) apply_doh "https://dns.malw.link/dns-query" "ntc.party"; added_any=1 ;;
+      8)
         apply_dot "xbox-dns.ru" "xbox-dns.ru" "gql.twitch.tv"
         apply_dot "xbox-dns.ru" "xbox-dns.ru" "usher.ttvnw.net"
         added_any=1
         ;;
-      8)
+      9)
         apply_doh "https://xbox-dns.ru/dns-query" "gql.twitch.tv"
         apply_doh "https://xbox-dns.ru/dns-query" "usher.ttvnw.net"
         added_any=1
         ;;
-      9)
+      10)
         # Supercell via NullsProxy DoT
         apply_dot "dns.nullsproxy.com" "dns.nullsproxy.com" "supercell.com"
         apply_dot "dns.nullsproxy.com" "dns.nullsproxy.com" "supercellid.com"
@@ -3687,7 +3705,7 @@ add_domain_menu() {
         apply_dot "dns.nullsproxy.com" "dns.nullsproxy.com" "clashroyaleapp.com"
         added_any=1
         ;;
-      10)
+      11)
         # Supercell via NullsProxy DoH
         apply_doh "https://dns.nullsproxy.com/dns-query" "supercell.com"
         apply_doh "https://dns.nullsproxy.com/dns-query" "supercellid.com"
@@ -3696,7 +3714,7 @@ add_domain_menu() {
         apply_doh "https://dns.nullsproxy.com/dns-query" "clashroyaleapp.com"
         added_any=1
         ;;
-      11)
+      12)
         ask "Введите домен (например: example.com): "; read -r dom
         [ -z "$dom" ] && continue
         echo "Тип протокола: 1) DoT  2) DoH"
@@ -3713,6 +3731,7 @@ add_domain_menu() {
         ;;
     esac
   done
+  [ "$failed_any" -eq 1 ] && sleep 2
   [ "$added_any" -eq 1 ] && dns_save_config
 }
 
