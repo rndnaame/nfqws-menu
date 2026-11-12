@@ -19,7 +19,7 @@
 #   sh installer_warpscout.sh
 #   curl -fsSL https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/installer_warpscout.sh | sh
 
-SCRIPT_VERSION="0.1.84"
+SCRIPT_VERSION="0.1.85"
 
 # ANSI (portable для ash/BusyBox)
 RED=$(printf '\033[0;31m')
@@ -1273,22 +1273,9 @@ do_scan() {
       info "Фильтр: все ноды · быстрый скан (-n 3)."
       ;;
     3)
-      # --- доп. параметры ---
-      echo
-      printf '%s\n' "${BOLD}Ноды:${NC}"
-      echo "  1) Без DME (рекомендуется)"
-      echo "  2) Все ноды"
-      echo "  0) Отмена"
-      echo
-      printf '  %sВыбор [1]:%s ' "$BOLD" "$NC"
-      _n2=$(read_choice)
-      echo
-      case "$_n2" in
-        0) info "Отменено."; return 0 ;;
-        ""|1) SCAN_EXCLUDE_NODE="DME"; info "Фильтр: без DME." ;;
-        2) SCAN_EXCLUDE_NODE=""; info "Фильтр: все ноды." ;;
-        *) warn "Неверный выбор."; return 1 ;;
-      esac
+      # --- доп. параметры: всегда без DME ---
+      SCAN_EXCLUDE_NODE="DME"
+      info "Фильтр: без DME (по умолчанию)."
 
       # junk
       echo
@@ -1334,16 +1321,15 @@ do_scan() {
         *) warn "Неверный выбор."; return 1 ;;
       esac
 
-      # -gen-i1 только без готового I1
+      # -gen-i1: по умолчанию random (если нет готового I1 из junk)
       if [ -z "$I1" ]; then
         echo
         printf '%s\n' "${BOLD}Профиль I1 (-gen-i1):${NC}"
-        echo "  1) Не задавать (дефолт warpscout)"
+        echo "  1) random"
         echo "  2) quic"
         echo "  3) dns"
         echo "  4) sip"
         echo "  5) stun"
-        echo "  6) random"
         echo "  0) Отмена"
         echo
         printf '  %sВыбор [1]:%s ' "$BOLD" "$NC"
@@ -1351,12 +1337,11 @@ do_scan() {
         echo
         case "$_isel" in
           0) info "Отменено."; return 0 ;;
-          ""|1) SCAN_GEN_I1=""; info "I1: дефолт warpscout." ;;
+          ""|1) SCAN_GEN_I1="random"; info "I1: -gen-i1 random" ;;
           2) SCAN_GEN_I1="quic"; info "I1: -gen-i1 quic" ;;
           3) SCAN_GEN_I1="dns"; info "I1: -gen-i1 dns" ;;
           4) SCAN_GEN_I1="sip"; info "I1: -gen-i1 sip" ;;
           5) SCAN_GEN_I1="stun"; info "I1: -gen-i1 stun" ;;
-          6) SCAN_GEN_I1="random"; info "I1: -gen-i1 random" ;;
           *) warn "Неверный выбор."; return 1 ;;
         esac
       else
