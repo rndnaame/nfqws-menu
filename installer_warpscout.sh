@@ -19,7 +19,7 @@
 #   sh installer_warpscout.sh
 #   curl -fsSL https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/installer_warpscout.sh | sh
 
-SCRIPT_VERSION="0.1.81"
+SCRIPT_VERSION="0.1.82"
 
 # ANSI (portable для ash/BusyBox)
 RED=$(printf '\033[0;31m')
@@ -1245,11 +1245,27 @@ do_scan() {
   mkdir -p /opt/root 2>/dev/null || true
   cd /opt/root || true
 
+  # Фильтр нод
+  echo
+  printf '%s\n' "${BOLD}Ноды Cloudflare:${NC}"
+  echo "  1) Без DME (рекомендуется)"
+  echo "  2) Все ноды"
+  echo "  0) Отмена"
+  echo
+  printf '  %sВыбор [1]:%s ' "$BOLD" "$NC"
+  _nsel=$(read_choice)
+  echo
+  case "$_nsel" in
+    0) info "Отменено."; return 0 ;;
+    ""|1) SCAN_EXCLUDE_NODE="DME"; info "Фильтр: без DME (Москва / DPI)." ;;
+    2) SCAN_EXCLUDE_NODE=""; info "Фильтр: все ноды." ;;
+    *) warn "Неверный выбор."; return 1 ;;
+  esac
+
   # Выбор junk для этого scan
   JC=""; JMIN=""; JMAX=""; I1=""
   echo
-  printf '%s
-' "${BOLD}Параметры junk для сканирования:${NC}"
+  printf '%s\n' "${BOLD}Параметры junk для сканирования:${NC}"
   echo "  1) Быстрое сканирование (без junk — дефолты warpscout)"
   if load_junk_params; then
     echo "  2) Сохранённые: jc=${JC:-?} jmin=${JMIN:-?} jmax=${JMAX:-?}"
@@ -1297,6 +1313,9 @@ do_scan() {
   esac
 
   set -- scan -p awg -P -o "$SCAN_OUT" -conf "$CONF_OUT"
+  if [ -n "$SCAN_EXCLUDE_NODE" ]; then
+    set -- "$@" -exclude-node "$SCAN_EXCLUDE_NODE"
+  fi
   if [ -n "$JC" ] || [ -n "$I1" ]; then
     [ -n "$JC" ] && set -- "$@" -jc "$JC"
     [ -n "$JMIN" ] && set -- "$@" -jmin "$JMIN"
