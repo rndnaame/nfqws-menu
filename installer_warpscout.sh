@@ -19,7 +19,7 @@
 #   sh installer_warpscout.sh
 #   curl -fsSL https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/installer_warpscout.sh | sh
 
-SCRIPT_VERSION="0.1.82"
+SCRIPT_VERSION="0.1.84"
 
 # ANSI (portable для ash/BusyBox)
 RED=$(printf '\033[0;31m')
@@ -1245,11 +1245,18 @@ do_scan() {
   mkdir -p /opt/root 2>/dev/null || true
   cd /opt/root || true
 
-  # Фильтр нод
+  # Фильтр нод (+ доп. параметры по желанию)
+  SCAN_EXCLUDE_NODE="DME"
+  JC=""; JMIN=""; JMAX=""; I1=""
+  SCAN_GEN_I1=""
+  SCAN_N=3
+  SCAN_FULL=0
+
   echo
   printf '%s\n' "${BOLD}Ноды Cloudflare:${NC}"
   echo "  1) Без DME (рекомендуется)"
   echo "  2) Все ноды"
+  echo "  3) Дополнительные параметры"
   echo "  0) Отмена"
   echo
   printf '  %sВыбор [1]:%s ' "$BOLD" "$NC"
@@ -1257,54 +1264,123 @@ do_scan() {
   echo
   case "$_nsel" in
     0) info "Отменено."; return 0 ;;
-    ""|1) SCAN_EXCLUDE_NODE="DME"; info "Фильтр: без DME (Москва / DPI)." ;;
-    2) SCAN_EXCLUDE_NODE=""; info "Фильтр: все ноды." ;;
-    *) warn "Неверный выбор."; return 1 ;;
-  esac
-
-  # Выбор junk для этого scan
-  JC=""; JMIN=""; JMAX=""; I1=""
-  echo
-  printf '%s\n' "${BOLD}Параметры junk для сканирования:${NC}"
-  echo "  1) Быстрое сканирование (без junk — дефолты warpscout)"
-  if load_junk_params; then
-    echo "  2) Сохранённые: jc=${JC:-?} jmin=${JMIN:-?} jmax=${JMAX:-?}"
-  else
-    printf '  %s2) Сохранённые%s  %s(нет %s)%s
-' "$DIM" "$NC" "$DIM" "$JUNK_FILE" "$NC"
-  fi
-  if is_awg_manager_installed; then
-    echo "  3) Из рабочего туннеля awg-manager"
-  else
-    printf '  %s3) Из туннеля awg-manager%s  %s(нет awg-manager)%s
-' "$DIM" "$NC" "$DIM" "$NC"
-  fi
-  echo "  0) Отмена"
-  echo
-  printf '  %sВыбор:%s ' "$BOLD" "$NC"
-  _jsel=$(read_choice)
-  echo
-  case "$_jsel" in
-    0|"") info "Отменено."; return 0 ;;
-    1)
-      JC=""; JMIN=""; JMAX=""; I1=""
-      info "Режим: быстрый scan без кастомных junk."
+    ""|1)
+      SCAN_EXCLUDE_NODE="DME"
+      info "Фильтр: без DME · быстрый скан (-n 3)."
       ;;
     2)
-      if ! load_junk_params; then
-        error "Нет сохранённых junk. Сначала п.4 или выберите другой режим."
-        return 1
-      fi
-      info "Режим: сохранённые junk (jc=$JC jmin=$JMIN jmax=$JMAX)."
+      SCAN_EXCLUDE_NODE=""
+      info "Фильтр: все ноды · быстрый скан (-n 3)."
       ;;
     3)
-      if ! is_awg_manager_installed; then
-        error "awg-manager не установлен."
-        return 1
+      # --- доп. параметры ---
+      echo
+      printf '%s\n' "${BOLD}Ноды:${NC}"
+      echo "  1) Без DME (рекомендуется)"
+      echo "  2) Все ноды"
+      echo "  0) Отмена"
+      echo
+      printf '  %sВыбор [1]:%s ' "$BOLD" "$NC"
+      _n2=$(read_choice)
+      echo
+      case "$_n2" in
+        0) info "Отменено."; return 0 ;;
+        ""|1) SCAN_EXCLUDE_NODE="DME"; info "Фильтр: без DME." ;;
+        2) SCAN_EXCLUDE_NODE=""; info "Фильтр: все ноды." ;;
+        *) warn "Неверный выбор."; return 1 ;;
+      esac
+
+      # junk
+      echo
+      printf '%s\n' "${BOLD}Параметры junk:${NC}"
+      echo "  1) Без кастомных (дефолты warpscout)"
+      if load_junk_params; then
+        echo "  2) Сохранённые: jc=${JC:-?} jmin=${JMIN:-?} jmax=${JMAX:-?}"
+      else
+        printf '  %s2) Сохранённые%s  %s(нет файла)%s\n' "$DIM" "$NC" "$DIM" "$NC"
       fi
-      if ! pick_junk_from_tunnel_menu; then
-        return 1
+      if is_awg_manager_installed; then
+        echo "  3) Из рабочего туннеля awg-manager"
+      else
+        printf '  %s3) Из туннеля awg-manager%s  %s(нет awg-manager)%s\n' "$DIM" "$NC" "$DIM" "$NC"
       fi
+      echo "  0) Отмена"
+      echo
+      printf '  %sВыбор [1]:%s ' "$BOLD" "$NC"
+      _jsel=$(read_choice)
+      echo
+      case "$_jsel" in
+        0) info "Отменено."; return 0 ;;
+        ""|1)
+          JC=""; JMIN=""; JMAX=""; I1=""
+          info "Junk: дефолты warpscout."
+          ;;
+        2)
+          if ! load_junk_params; then
+            error "Нет сохранённых junk."
+            return 1
+          fi
+          info "Junk: сохранённые (jc=$JC jmin=$JMIN jmax=$JMAX)."
+          ;;
+        3)
+          if ! is_awg_manager_installed; then
+            error "awg-manager не установлен."
+            return 1
+          fi
+          if ! pick_junk_from_tunnel_menu; then
+            return 1
+          fi
+          ;;
+        *) warn "Неверный выбор."; return 1 ;;
+      esac
+
+      # -gen-i1 только без готового I1
+      if [ -z "$I1" ]; then
+        echo
+        printf '%s\n' "${BOLD}Профиль I1 (-gen-i1):${NC}"
+        echo "  1) Не задавать (дефолт warpscout)"
+        echo "  2) quic"
+        echo "  3) dns"
+        echo "  4) sip"
+        echo "  5) stun"
+        echo "  6) random"
+        echo "  0) Отмена"
+        echo
+        printf '  %sВыбор [1]:%s ' "$BOLD" "$NC"
+        _isel=$(read_choice)
+        echo
+        case "$_isel" in
+          0) info "Отменено."; return 0 ;;
+          ""|1) SCAN_GEN_I1=""; info "I1: дефолт warpscout." ;;
+          2) SCAN_GEN_I1="quic"; info "I1: -gen-i1 quic" ;;
+          3) SCAN_GEN_I1="dns"; info "I1: -gen-i1 dns" ;;
+          4) SCAN_GEN_I1="sip"; info "I1: -gen-i1 sip" ;;
+          5) SCAN_GEN_I1="stun"; info "I1: -gen-i1 stun" ;;
+          6) SCAN_GEN_I1="random"; info "I1: -gen-i1 random" ;;
+          *) warn "Неверный выбор."; return 1 ;;
+        esac
+      else
+        info "I1 уже задан из junk — -gen-i1 не нужен."
+      fi
+
+      # глубина
+      echo
+      printf '%s\n' "${BOLD}Глубина скана:${NC}"
+      echo "  1) Быстрый  (-n 3)"
+      echo "  2) Обычный  (-n 5)"
+      echo "  3) Полный   (-full)"
+      echo "  0) Отмена"
+      echo
+      printf '  %sВыбор [1]:%s ' "$BOLD" "$NC"
+      _dsel=$(read_choice)
+      echo
+      case "$_dsel" in
+        0) info "Отменено."; return 0 ;;
+        ""|1) SCAN_N=3; SCAN_FULL=0; info "Глубина: быстрый (-n 3)." ;;
+        2) SCAN_N=5; SCAN_FULL=0; info "Глубина: обычный (-n 5)." ;;
+        3) SCAN_N=""; SCAN_FULL=1; info "Глубина: полный (-full)." ;;
+        *) warn "Неверный выбор."; return 1 ;;
+      esac
       ;;
     *)
       warn "Неверный выбор."
@@ -1315,6 +1391,14 @@ do_scan() {
   set -- scan -p awg -P -o "$SCAN_OUT" -conf "$CONF_OUT"
   if [ -n "$SCAN_EXCLUDE_NODE" ]; then
     set -- "$@" -exclude-node "$SCAN_EXCLUDE_NODE"
+  fi
+  if [ "$SCAN_FULL" = "1" ]; then
+    set -- "$@" -full
+  elif [ -n "$SCAN_N" ]; then
+    set -- "$@" -n "$SCAN_N"
+  fi
+  if [ -n "$SCAN_GEN_I1" ]; then
+    set -- "$@" -gen-i1 "$SCAN_GEN_I1"
   fi
   if [ -n "$JC" ] || [ -n "$I1" ]; then
     [ -n "$JC" ] && set -- "$@" -jc "$JC"
