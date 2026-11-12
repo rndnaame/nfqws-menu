@@ -3385,7 +3385,7 @@ apply_dot() {
   [ -n "$sni" ] && cmd="$cmd sni $sni"
   [ -n "$domain" ] && cmd="$cmd domain $domain"
   printf '%s\n' "${CYAN}Применение DoT ($ip):${NC} ndmc -c \"$cmd\""
-  ndmc_cli "$cmd" > /dev/null 2>&1 || warn "ndmc вернул ошибку при добавлении DoT $ip"
+  ndmc_cli "$cmd" > /dev/null 2>&1 || { warn "ndmc вернул ошибку при добавлении DoT $ip"; return 1; }
 }
 
 apply_doh() {

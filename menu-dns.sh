@@ -110,9 +110,14 @@ show_dns_servers() {
 # Сохранение конфигурации
 save_config() {
     echo -n "Сохранение конфигурации..."
-    ndmc -c system configuration save > /dev/null 2>&1
-    echo " [ГОТОВО]"
-    sleep 1
+    if ndmc -c system configuration save > /dev/null 2>&1; then
+        echo " [ГОТОВО]"
+        sleep 1
+        return 0
+    fi
+    echo -e " ${C_RED}[ОШИБКА]${C_RESET} конфигурация не сохранена"
+    sleep 2
+    return 1
 }
 
 # Применение DoT
