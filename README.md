@@ -4,7 +4,7 @@
 
 Репозиторий также служит хранилищем готовых **стратегий** обхода DPI, **blobs** и **lists**.
 
-- Скрипт: `nfqws-menu.sh` (текущая версия **0.10.26**)
+- Скрипт: `nfqws-menu.sh` (текущая версия **0.11.03**)
 - Стратегии: `strategies/`
 - Hosts: `hosts`
 - Контрольные суммы: `SHA256SUMS`, `strategies/blobs/SHA256SUMS`
@@ -116,7 +116,7 @@ menu
       00. Выход
 ```
 
-Горячие клавиши: **S** — сервисные утилиты (UPX, Dropbear fix, upgrade пакетов); **U** — `opkg update && opkg upgrade`; **77** — смена языка RU↔EN.
+Горячие клавиши: **S** — сервисные утилиты (UPX, Dropbear fix, починить OPKG); **U** — безопасное обновление Entware (см. ниже); **77** — смена языка RU↔EN.
 
 Пример блока статуса:
 
@@ -421,7 +421,7 @@ Telegram MTProto-прокси на Rust (полная реализация оф�
 | 1 | **Сжать bin/sbin (UPX)** — `upx --lzma --best` для `/opt/bin`, `/opt/sbin`, `/opt/usr/bin`, `/opt/libexec` (при необходимости ставит `upx`) |
 | 2 | **Dropbear fix** — правки conf/init Entware dropbear (с опцией сброса пароля root или без) |
 | 3 | **Починить OPKG** — снятие залипших lock opkg, дедуп `src/gz` entware/keendev, починка битого `status` (NUL → segfault), выравнивание arch-path в `/opt/etc/opkg.conf` |
-| U | **Обновить все пакеты** — `opkg update && opkg upgrade` (также клавиша **U** из главного меню) |
+| U | **Обновить все пакеты** (клавиша **U** из главного меню / сервиса). Порядок: основной репо **bin.entware.net** → `opkg update` → `busybox`/`poorbox` → AdGuard (если есть) → **awg-manager UPX** авто через [awg-compressed](https://github.com/rndnaame/awg-compressed) (`INSTALL_AWG=1`, при наличии sing-box ещё `INSTALL_SB=1`) + `opkg flag hold` → mass `opkg upgrade` → dpi-detector при новой версии. Вывод opkg приглушён; этапы **1/6…6/6**. |
 
 ### 16. TG WS Proxy Rust (tg-ws-proxy-rs)
 
@@ -567,28 +567,28 @@ curl -fsSL https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/installer_
 Полная история: **[CHANGELOG.md](CHANGELOG.md)**.
 
 <details>
-<summary><strong>Недавние версии (0.10.x)</strong> — нажмите, чтобы развернуть</summary>
+<summary><strong>Недавние версии (0.11.x / 0.10.x)</strong> — нажмите, чтобы развернуть</summary>
+
+### 0.11.03
+- **U / awg UPX auto** — при наличии `sing-box` рядом с awg-manager: `INSTALL_AWG=1 INSTALL_SB=1` (оба пакета через awg-compressed)
+
+### 0.11.02
+- линейка **0.11.x** (см. [CHANGELOG.md](CHANGELOG.md) для полного списка)
+
+### 0.10.35 – 0.10.36
+- **U** — тихий opkg (без простыни Downloading); AWG/dpi только если remote новее; авто-UPX без tty-промптов; успех по смене версии
+
+### 0.10.33 – 0.10.34
+- **U** — этапы 1/6…6/6; awg UPX до mass upgrade + `opkg flag hold`
+
+### 0.10.30 – 0.10.32
+- **U** — порядок Entware (bin.entware.net, busybox/poorbox, AdGuard, upgrade)
 
 ### 0.10.26
-- **show_installed** — оптимизация: `emit_opkg`, без `opkg list-installed` / `command -v dpi-detector`; telemt-panel версия из status-кэша
-
-### 0.10.25
-- **show_installed** — firc не дублируется в «прочие init.d»
-
-### 0.10.24
-- **п. 88** — после удаления `nfqws2-ui` запрос на хвосты (`/opt/etc/nfqws-ui`, snapshots/history)
-
-### 0.10.23
-- статус **nfqws2-ui** (⚡ порт **8090**); удаление в п. 88
-
-### 0.10.22
-- **п. 1 → 4)** nfqws-ui (zemidala/nfqws2-ui)
+- **show_installed** — `emit_opkg`, без `opkg list-installed` на каждом кадре
 
 ### 0.10.21
-- **п. 18 warpscout** — поиск эндпоинтов Cloudflare WARP
-
-### 0.10.19
-- SHA256SUMS cache через tmp+mv (PR #24); правки README/UI (PR #25)
+- **п. 18 warpscout**
 
 ### 0.10.1
 - линейка **0.10.x**
