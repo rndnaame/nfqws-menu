@@ -1,3 +1,7 @@
+### 0.11.04
+
+- **U / awg UPX auto** — прогон awg-compressed не только при новой версии awg, но и если стоит **sing-box** (иначе SB не обновлялся при актуальном awg)
+
 ### 0.11.03
 
 - **U / awg UPX auto** — если есть `sing-box` рядом с awg-manager → `INSTALL_AWG=1 INSTALL_SB=1` (оба), без порога размера UPX

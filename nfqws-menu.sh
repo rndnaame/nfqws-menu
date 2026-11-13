@@ -10,7 +10,7 @@
 
 set -e
 
-SCRIPT_VERSION="0.11.03"
+SCRIPT_VERSION="0.11.04"
 
 REPO_URL="https://github.com/rndnaame/nfqws-menu"
 RAW_BASE="https://raw.githubusercontent.com/rndnaame/nfqws-menu/main"
@@ -4634,6 +4634,31 @@ awg_manager_upx_needs_update() {
   return 1
 }
 
+# sing-box рядом с awg-manager
+has_awg_singbox() {
+  [ -x /opt/etc/awg-manager/singbox/sing-box ] || [ -f /opt/etc/awg-manager/singbox/sing-box ]
+}
+
+singbox_local_version() {
+  local meta="/opt/etc/awg-manager/singbox/sing-box.meta.json" v=""
+  if [ -f "$meta" ]; then
+    v=$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$meta" 2>/dev/null | head -1)
+  fi
+  if [ -z "$v" ] && [ -x /opt/etc/awg-manager/singbox/sing-box ]; then
+    v=$(/opt/etc/awg-manager/singbox/sing-box version 2>/dev/null | head -1 | \
+      sed -n 's/.*\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][^[:space:]]*\).*/\1/p')
+  fi
+  [ -n "$v" ] && printf '%s\n' "$v"
+}
+
+# Прогон awg-compressed: awg новее ИЛИ есть sing-box (иначе SB не обновляется при актуальном awg).
+awg_upx_auto_needed() {
+  awg_manager_upx_needs_update && return 0
+  has_awg_singbox && return 0
+  return 1
+}
+
+
 # Тихое обновление UPX awg-manager (без меню / без вопросов на tty).
 update_awg_manager_upx_auto() {
   local url="${AWG_MANAGER_INSTALL_URL:-https://raw.githubusercontent.com/rndnaame/awg-compressed/main/install-compressed.sh}"
@@ -4700,6 +4725,10 @@ update_awg_manager_upx_auto() {
   else
     [ -n "$ver_after" ] && [ "$ver_after" != "$ver_before" ] && \
       info "    awg-manager: ${ver_before:-?} → $ver_after"
+    if grep -qE 'sing-box:.*\(upgrade\)|sing-box:.*\(install\)|sing-box:.*→' "$log" 2>/dev/null; then
+      _sbl=$(grep -E 'sing-box:' "$log" 2>/dev/null | tail -1 | tr -d '\r')
+      [ -n "$_sbl" ] && info "    $_sbl"
+    fi
   fi
 
   rm -f "$tmp" "$log"
@@ -5393,8 +5422,13 @@ opkg_upgrade_all() {
 
   if is_awg_manager_upx; then
     awg_ver=$(pkg_version "awg-manager" 2>/dev/null || echo "?")
-    if awg_manager_upx_needs_update; then
-      info "4/6  awg-manager UPX $awg_ver → обновление ..."
+    if awg_upx_auto_needed; then
+      if has_awg_singbox; then
+        _sbv=$(singbox_local_version 2>/dev/null || echo "?")
+        info "4/6  awg-manager UPX $awg_ver + sing-box ${_sbv} → проверка/обновление ..."
+      else
+        info "4/6  awg-manager UPX $awg_ver → обновление ..."
+      fi
       if update_awg_manager_upx_auto; then
         info "    ok"
       else
