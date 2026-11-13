@@ -10,7 +10,7 @@
 
 set -e
 
-SCRIPT_VERSION="0.11.02"
+SCRIPT_VERSION="0.11.03"
 
 REPO_URL="https://github.com/rndnaame/nfqws-menu"
 RAW_BASE="https://raw.githubusercontent.com/rndnaame/nfqws-menu/main"
@@ -4676,12 +4676,9 @@ update_awg_manager_upx_auto() {
     { print }
   ' "$tmp" > "${tmp}.ni" && mv "${tmp}.ni" "$tmp"
 
-  if [ -x /opt/etc/awg-manager/singbox/sing-box ]; then
-    _sb=$(wc -c < /opt/etc/awg-manager/singbox/sing-box 2>/dev/null | tr -d ' \t\n\r')
-    case "$_sb" in
-      ''|*[!0-9]*) ;;
-      *) [ "$_sb" -gt 100000 ] && [ "$_sb" -lt 20971520 ] && sb_env=1 ;;
-    esac
+  # Есть sing-box рядом с awg-manager → обновлять оба (UPX/compressed)
+  if [ -x /opt/etc/awg-manager/singbox/sing-box ] || [ -f /opt/etc/awg-manager/singbox/sing-box ]; then
+    sb_env=1
   fi
 
   # без tty: installer не должен спрашивать

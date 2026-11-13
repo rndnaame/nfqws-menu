@@ -1,3 +1,8 @@
+### 0.11.03
+
+- **U / awg UPX auto** — если есть `sing-box` рядом с awg-manager → `INSTALL_AWG=1 INSTALL_SB=1` (оба), без порога размера UPX
+
+
 # Changelog
 
 История изменений **nfqws-menu**. Актуальная версия скрипта — в [`README.md`](README.md).
