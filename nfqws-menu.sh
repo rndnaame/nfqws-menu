@@ -10,9 +10,8 @@
 
 set -e
 
-SCRIPT_VERSION="0.11.04"
+SCRIPT_VERSION="0.11.05"
 
-REPO_URL="https://github.com/rndnaame/nfqws-menu"
 RAW_BASE="https://raw.githubusercontent.com/rndnaame/nfqws-menu/main"
 STRATEGIES_API="https://api.github.com/repos/rndnaame/nfqws-menu/contents/strategies"
 
@@ -4507,8 +4506,6 @@ EOF
 # 15. telemt / telemt-panel — installer_telemt.sh
 # ---------------------------------------------------------------------------
 TELEMT_BUNDLE_URL="https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/installer_telemt.sh"
-TELEMT_SYSTEMCTL_URL="https://raw.githubusercontent.com/anch665/keendev/main/systemctl.sh"
-TELEMT_JOURNALCTL_URL="https://raw.githubusercontent.com/anch665/keendev/main/journalctl.sh"
 
 
 is_telemt_installed() {

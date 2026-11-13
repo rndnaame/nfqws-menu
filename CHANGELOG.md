@@ -1,3 +1,7 @@
+### 0.11.05
+
+- удалены неиспользуемые константы: `REPO_URL`, `TELEMT_SYSTEMCTL_URL`, `TELEMT_JOURNALCTL_URL`
+
 ### 0.11.04
 
 - **U / awg UPX auto** — прогон awg-compressed не только при новой версии awg, но и если стоит **sing-box** (иначе SB не обновлялся при актуальном awg)
