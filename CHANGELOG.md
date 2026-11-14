@@ -1,3 +1,7 @@
+### 0.11.07
+
+- **CLI** — быстрый запуск пункта: `menu 18`, `menu u` / `menu U`, `menu S`, `menu 99` (`run_menu_choice`); `menu -h` — справка
+
 ### 0.11.06
 
 - **awg / sing-box** — с релиза **41** бинарь `awgm-box` (`/opt/etc/awg-manager/singbox/awgm-box`, [hoaxisr/awgm-box](https://github.com/hoaxisr/awgm-box)); статус, U-auto и версия учитывают `awgm-box` и старый `sing-box`

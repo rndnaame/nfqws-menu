@@ -10,7 +10,7 @@
 
 set -e
 
-SCRIPT_VERSION="0.11.06"
+SCRIPT_VERSION="0.11.07"
 
 RAW_BASE="https://raw.githubusercontent.com/rndnaame/nfqws-menu/main"
 STRATEGIES_API="https://api.github.com/repos/rndnaame/nfqws-menu/contents/strategies"
@@ -7182,6 +7182,45 @@ read_choice() {
 # ---------------------------------------------------------------------------
 # Главное меню
 # ---------------------------------------------------------------------------
+# Выполнить пункт главного меню ($1 = 1..19|S|U|77|88|99|o…).
+# return: 0 ок, 2 выход (0/00), 1 неизвестный пункт.
+run_menu_choice() {
+  local choice="$1"
+  case "$choice" in
+      1)  menu_install_nfqws || true ;;
+      2)  menu_strategy || true ;;
+      3)  update_ipset_list || true ;;
+      4)  update_rkn_list || true ;;
+      5)  menu_dot_doh || true ;;
+      6)  menu_change_fake_blob || true ;;
+      7)  menu_update_hosts || true ;;
+      8)  menu_dns_manage || true ;;
+      9)  menu_discord_fullsession || true ;;
+      10) menu_dpi_detector || true ;;
+      11) menu_awg_manager || true ;;
+      12) menu_keenkit || true ;;
+      13) menu_usque_keenetic || true ;;
+      14) menu_magitrickle || true ;;
+      15) menu_telemt || true ;;
+      16) menu_tg_ws_proxy_rs || true ;;
+      17) menu_firc || true ;;
+      18) menu_warpscout || true ;;
+      19) menu_antiscan || true ;;
+      S|s) menu_service || true ;;
+      U|u) opkg_upgrade_all || true ;;
+      o|O) menu_opera_hidden || true ;;
+      77) menu_change_language || true ;;
+      88) menu_remove || true ;;
+      99) update_self || true ;;
+      00|0|"")
+        info "$LBL_00."
+        return 2
+        ;;
+      *) warn "${LBL_INVALID:-Invalid menu option}"; return 1 ;;
+  esac
+  return 0
+}
+
 main_menu() {
   ensure_single_instance
   upd_start
@@ -7234,38 +7273,11 @@ main_menu() {
     fi
 
     # || true — при set -e любой return 1 из пункта не должен завершать скрипт
-    case "$choice" in
-      1)  menu_install_nfqws || true ;;
-      2)  menu_strategy || true ;;
-      3)  update_ipset_list || true ;;
-      4)  update_rkn_list || true ;;
-      5)  menu_dot_doh || true ;;
-      6)  menu_change_fake_blob || true ;;
-      7)  menu_update_hosts || true ;;
-      8)  menu_dns_manage || true ;;
-      9)  menu_discord_fullsession || true ;;
-      10) menu_dpi_detector || true ;;
-      11) menu_awg_manager || true ;;
-      12) menu_keenkit || true ;;
-      13) menu_usque_keenetic || true ;;
-      14) menu_magitrickle || true ;;
-      15) menu_telemt || true ;;
-      16) menu_tg_ws_proxy_rs || true ;;
-      17) menu_firc || true ;;
-      18) menu_warpscout || true ;;
-      19) menu_antiscan || true ;;
-      S|s) menu_service || true ;;
-      U|u) opkg_upgrade_all || true ;;
-      o|O) menu_opera_hidden || true ;;
-      77) menu_change_language; continue ;;
-      88) menu_remove || true ;;
-      99) update_self || true ;;
-      00|0|"")
-        info "$LBL_00."
-        exit 0
-        ;;
-      *) warn "${LBL_INVALID:-Invalid menu option}" ;;
-    esac
+    run_menu_choice "$choice"
+    rc=$?
+    [ "$rc" = 2 ] && exit 0
+    [ "$choice" = "77" ] && continue
+
 
     # После внешних установщиков stdin часто «грязный» — чистим перед паузой
     drain_stdin
@@ -7324,6 +7336,32 @@ ensure_menu_symlink
 if ! command -v opkg >/dev/null 2>&1; then
   error "opkg не найден. Скрипт предназначен для Entware (Keenetic/Netcraze)."
   exit 1
+fi
+
+# Быстрый запуск пункта: menu 18 | menu u | menu S | menu 99 …
+if [ -n "${1:-}" ]; then
+  case "$1" in
+    -h|--help|help|h|H)
+      echo "Usage: menu [item]"
+      echo "  menu            interactive menu"
+      echo "  menu 18         open item 18 (warpscout)"
+      echo "  menu u | menu U upgrade packages"
+      echo "  menu S          service submenu"
+      echo "  menu 99         update this script"
+      exit 0
+      ;;
+  esac
+  ensure_single_instance
+  echo
+  printf '%s\n' "${CYAN}${BOLD}NFQWS-MENU v${SCRIPT_VERSION}${NC} → $1"
+  echo
+  # язык уже применён при загрузке скрипта (ui_apply_lang в начале)
+  detect_arch 2>/dev/null || true
+  run_menu_choice "$1"
+  rc=$?
+  [ "$rc" = 2 ] && exit 0
+  [ "$rc" = 1 ] && exit 1
+  exit 0
 fi
 
 main_menu
