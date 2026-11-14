@@ -1,3 +1,7 @@
+### 0.11.08
+
+- **CLI aliases** — `menu firc` / `awg`/`awgm` / `warp`/`warpscout` / `nfqws` и др.; `menu help` / `-h` со списком пунктов
+
 ### 0.11.07
 
 - **CLI** — быстрый запуск пункта: `menu 18`, `menu u` / `menu U`, `menu S`, `menu 99` (`run_menu_choice`); `menu -h` — справка

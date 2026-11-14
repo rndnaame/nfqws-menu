@@ -10,7 +10,7 @@
 
 set -e
 
-SCRIPT_VERSION="0.11.07"
+SCRIPT_VERSION="0.11.08"
 
 RAW_BASE="https://raw.githubusercontent.com/rndnaame/nfqws-menu/main"
 STRATEGIES_API="https://api.github.com/repos/rndnaame/nfqws-menu/contents/strategies"
@@ -7338,26 +7338,95 @@ if ! command -v opkg >/dev/null 2>&1; then
   exit 1
 fi
 
-# Быстрый запуск пункта: menu 18 | menu u | menu S | menu 99 …
+# Алиасы CLI → код пункта меню (в нижнем регистре).
+# Пустой вывод = help; «-» = неизвестно.
+resolve_menu_arg() {
+  local a
+  a=$(printf '%s' "$1" | tr 'A-Z' 'a-z')
+  case "$a" in
+    -h|--help|help|h) printf '%s\n' "" ;;
+    1|nfqws|install) printf '%s\n' "1" ;;
+    2|strategy|strategies) printf '%s\n' "2" ;;
+    3|ipset) printf '%s\n' "3" ;;
+    4|rkn) printf '%s\n' "4" ;;
+    5|dot|doh|dotdoh) printf '%s\n' "5" ;;
+    6|blob|fake|fakeblob) printf '%s\n' "6" ;;
+    7|hosts) printf '%s\n' "7" ;;
+    8|dns) printf '%s\n' "8" ;;
+    9|discord) printf '%s\n' "9" ;;
+    10|dpi|dpi-detector|dpidetector) printf '%s\n' "10" ;;
+    11|awg|awgm|awg-manager|awgmanager) printf '%s\n' "11" ;;
+    12|keenkit|kit) printf '%s\n' "12" ;;
+    13|usque|usque-keenetic) printf '%s\n' "13" ;;
+    14|magitrickle|magi) printf '%s\n' "14" ;;
+    15|telemt|telemt-panel) printf '%s\n' "15" ;;
+    16|tgws|tg-ws|tgwsrs|tg-ws-proxy|tg-ws-proxy-rs) printf '%s\n' "16" ;;
+    17|firc) printf '%s\n' "17" ;;
+    18|warp|warpscout|warps) printf '%s\n' "18" ;;
+    19|antiscan|ascn) printf '%s\n' "19" ;;
+    s|service) printf '%s\n' "S" ;;
+    u|upgrade|opkg-upgrade) printf '%s\n' "U" ;;
+    o|opera|opera-proxy) printf '%s\n' "o" ;;
+    77|lang|language) printf '%s\n' "77" ;;
+    88|remove|uninstall) printf '%s\n' "88" ;;
+    99|self|update|self-update) printf '%s\n' "99" ;;
+    0|00|exit|quit) printf '%s\n' "0" ;;
+    *) printf '%s\n' "-" ;;
+  esac
+}
+
+menu_cli_help() {
+  echo "Usage: menu [item|alias]"
+  echo "  menu                 interactive menu"
+  echo "  menu help | menu -h  this help"
+  echo
+  echo "Items (number or alias):"
+  echo "  1  nfqws|install          install NFQWS/NFQWS2"
+  echo "  2  strategy               choose strategy"
+  echo "  3  ipset                  update IPSet list"
+  echo "  4  rkn                    load rkn.list"
+  echo "  5  dot|doh                DoT/DoH bypass"
+  echo "  6  blob|fake              change fake:blob"
+  echo "  7  hosts                  update hosts"
+  echo "  8  dns                    manage DoT/DoH"
+  echo "  9  discord                Discord fullsession"
+  echo "  10 dpi|dpi-detector"
+  echo "  11 awg|awgm|awg-manager"
+  echo "  12 keenkit|kit"
+  echo "  13 usque"
+  echo "  14 magitrickle|magi"
+  echo "  15 telemt"
+  echo "  16 tgws|tg-ws-proxy-rs"
+  echo "  17 firc"
+  echo "  18 warp|warpscout"
+  echo "  19 antiscan|ascn"
+  echo "  S  service                service tools"
+  echo "  U  u|upgrade              upgrade all packages"
+  echo "  77 lang                   interface language"
+  echo "  88 remove                 remove packages"
+  echo "  99 update|self            update this script"
+}
+
+# Быстрый запуск: menu 18 | menu warpscout | menu u | menu firc …
 if [ -n "${1:-}" ]; then
-  case "$1" in
-    -h|--help|help|h|H)
-      echo "Usage: menu [item]"
-      echo "  menu            interactive menu"
-      echo "  menu 18         open item 18 (warpscout)"
-      echo "  menu u | menu U upgrade packages"
-      echo "  menu S          service submenu"
-      echo "  menu 99         update this script"
+  _arg=$(resolve_menu_arg "$1")
+  case "$_arg" in
+    "")
+      menu_cli_help
       exit 0
+      ;;
+    -)
+      warn "Unknown item: $1"
+      echo "Try: menu help"
+      exit 1
       ;;
   esac
   ensure_single_instance
   echo
-  printf '%s\n' "${CYAN}${BOLD}NFQWS-MENU v${SCRIPT_VERSION}${NC} → $1"
+  printf '%s\n' "${CYAN}${BOLD}NFQWS-MENU v${SCRIPT_VERSION}${NC} → $1 ($_arg)"
   echo
-  # язык уже применён при загрузке скрипта (ui_apply_lang в начале)
   detect_arch 2>/dev/null || true
-  run_menu_choice "$1"
+  run_menu_choice "$_arg"
   rc=$?
   [ "$rc" = 2 ] && exit 0
   [ "$rc" = 1 ] && exit 1
