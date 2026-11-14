@@ -1,3 +1,7 @@
+### 0.11.06
+
+- **awg / sing-box** — с релиза **41** бинарь `awgm-box` (`/opt/etc/awg-manager/singbox/awgm-box`, [hoaxisr/awgm-box](https://github.com/hoaxisr/awgm-box)); статус, U-auto и версия учитывают `awgm-box` и старый `sing-box`
+
 ### 0.11.05
 
 - удалены неиспользуемые константы: `REPO_URL`, `TELEMT_SYSTEMCTL_URL`, `TELEMT_JOURNALCTL_URL`

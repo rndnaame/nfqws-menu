@@ -10,7 +10,7 @@
 
 set -e
 
-SCRIPT_VERSION="0.11.05"
+SCRIPT_VERSION="0.11.06"
 
 RAW_BASE="https://raw.githubusercontent.com/rndnaame/nfqws-menu/main"
 STRATEGIES_API="https://api.github.com/repos/rndnaame/nfqws-menu/contents/strategies"
@@ -1060,7 +1060,8 @@ show_installed() {
   port_is_open 8090 && ui_up=1
   # Antiscan не держит процесс: признак работы — /tmp/ascn.run (S99ascn)
   [ -f /tmp/ascn.run ] && ascn_up=1
-  { [ -x /opt/etc/awg-manager/singbox/sing-box ] || [ -f /opt/etc/awg-manager/singbox/sing-box ]; } && has_sb=1
+  # sing-box (до .40) или awgm-box (с .41 / hoaxisr/awgm-box)
+  { [ -x /opt/etc/awg-manager/singbox/awgm-box ] || [ -f /opt/etc/awg-manager/singbox/awgm-box ] ||     [ -x /opt/etc/awg-manager/singbox/sing-box ] || [ -f /opt/etc/awg-manager/singbox/sing-box ]; } && has_sb=1
 
   # --- внешние tools (не из opkg status) → extras tool|name|ver|proc ---
   if [ -x "${TG_WS_PROXY_RS_BIN:-/opt/bin/tg-ws-proxy-rs}" ]; then
@@ -1220,7 +1221,7 @@ show_installed() {
       if (("awg-manager" in opkg) || awgdir) {
         aver = ("awg-manager" in opkg) ? opkg["awg-manager"] : "ok"
         if (HAS_SB) aver = aver " [+SB]"
-        up = proc_has("awg-manager") || proc_has("amneziawg") || (HAS_SB && proc_has("sing-box"))
+        up = proc_has("awg-manager") || proc_has("amneziawg") || (HAS_SB && (proc_has("sing-box") || proc_has("awgm-box")))
         row("awg-manager", aver,
             mark_run(up) mark_upd("awg-manager", ("awg-manager" in opkg) ? opkg["awg-manager"] : ""))
       }
@@ -4631,19 +4632,39 @@ awg_manager_upx_needs_update() {
   return 1
 }
 
-# sing-box рядом с awg-manager
+# sing-box (≤.40) или awgm-box (≥41, https://github.com/hoaxisr/awgm-box)
 has_awg_singbox() {
-  [ -x /opt/etc/awg-manager/singbox/sing-box ] || [ -f /opt/etc/awg-manager/singbox/sing-box ]
+  local d="/opt/etc/awg-manager/singbox"
+  [ -x "$d/awgm-box" ] || [ -f "$d/awgm-box" ] ||     [ -x "$d/sing-box" ] || [ -f "$d/sing-box" ]
+}
+
+# Путь к бинарнику SB/awgm-box (первый существующий).
+awg_singbox_bin() {
+  local d="/opt/etc/awg-manager/singbox" b
+  for b in awgm-box sing-box; do
+    if [ -x "$d/$b" ] || [ -f "$d/$b" ]; then
+      printf '%s\n' "$d/$b"
+      return 0
+    fi
+  done
+  return 1
 }
 
 singbox_local_version() {
-  local meta="/opt/etc/awg-manager/singbox/sing-box.meta.json" v=""
-  if [ -f "$meta" ]; then
+  local d="/opt/etc/awg-manager/singbox" meta v="" bin
+  for meta in "$d/awgm-box.meta.json" "$d/sing-box.meta.json"; do
+    [ -f "$meta" ] || continue
     v=$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$meta" 2>/dev/null | head -1)
-  fi
-  if [ -z "$v" ] && [ -x /opt/etc/awg-manager/singbox/sing-box ]; then
-    v=$(/opt/etc/awg-manager/singbox/sing-box version 2>/dev/null | head -1 | \
-      sed -n 's/.*\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][^[:space:]]*\).*/\1/p')
+    [ -n "$v" ] && break
+  done
+  if [ -z "$v" ]; then
+    bin=$(awg_singbox_bin 2>/dev/null) || true
+    if [ -n "$bin" ] && [ -x "$bin" ]; then
+      v=$("$bin" version 2>/dev/null | head -1 | \
+        sed -n 's/.*\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][^[:space:]]*\).*/\1/p')
+      # awgm-box иногда только номер релиза (41)
+      [ -z "$v" ] && v=$("$bin" version 2>/dev/null | head -1 | tr -d '\r' | awk '{print $NF}')
+    fi
   fi
   [ -n "$v" ] && printf '%s\n' "$v"
 }
@@ -4698,8 +4719,8 @@ update_awg_manager_upx_auto() {
     { print }
   ' "$tmp" > "${tmp}.ni" && mv "${tmp}.ni" "$tmp"
 
-  # Есть sing-box рядом с awg-manager → обновлять оба (UPX/compressed)
-  if [ -x /opt/etc/awg-manager/singbox/sing-box ] || [ -f /opt/etc/awg-manager/singbox/sing-box ]; then
+  # Есть sing-box / awgm-box → обновлять оба (INSTALL_SB=1)
+  if has_awg_singbox; then
     sb_env=1
   fi
 
@@ -4722,8 +4743,8 @@ update_awg_manager_upx_auto() {
   else
     [ -n "$ver_after" ] && [ "$ver_after" != "$ver_before" ] && \
       info "    awg-manager: ${ver_before:-?} → $ver_after"
-    if grep -qE 'sing-box:.*\(upgrade\)|sing-box:.*\(install\)|sing-box:.*→' "$log" 2>/dev/null; then
-      _sbl=$(grep -E 'sing-box:' "$log" 2>/dev/null | tail -1 | tr -d '\r')
+    if grep -qE 'sing-box:.*\(upgrade\)|sing-box:.*\(install\)|sing-box:.*→|awgm-box' "$log" 2>/dev/null; then
+      _sbl=$(grep -E 'sing-box:|awgm-box' "$log" 2>/dev/null | tail -1 | tr -d '\r')
       [ -n "$_sbl" ] && info "    $_sbl"
     fi
   fi
@@ -5422,7 +5443,7 @@ opkg_upgrade_all() {
     if awg_upx_auto_needed; then
       if has_awg_singbox; then
         _sbv=$(singbox_local_version 2>/dev/null || echo "?")
-        info "4/6  awg-manager UPX $awg_ver + sing-box ${_sbv} → проверка/обновление ..."
+        info "4/6  awg-manager UPX $awg_ver + SB/awgm-box ${_sbv} → проверка/обновление ..."
       else
         info "4/6  awg-manager UPX $awg_ver → обновление ..."
       fi
