@@ -19,7 +19,7 @@
 #   sh installer_warpscout.sh
 #   curl -fsSL https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/installer_warpscout.sh | sh
 
-SCRIPT_VERSION="0.1.93"
+SCRIPT_VERSION="0.1.94"
 
 # ANSI (portable для ash/BusyBox)
 RED=$(printf '\033[0;31m')
@@ -850,8 +850,87 @@ awg_replace_conf_file() {
   return 0
 }
 
+# Применить junk (Jc/Jmin/Jmax/I1) к системному WireguardN через ASC CLI
+# Не трогает PrivateKey / Endpoint / Address
+sys_wg_apply_junk() {
+  if ! command -v ndmc >/dev/null 2>&1; then
+    error "ndmc не найден."
+    return 1
+  fi
+  load_junk_params || return 1
+  [ -n "$JC" ] || JC=0
+  [ -n "$JMIN" ] || JMIN=0
+  [ -n "$JMAX" ] || JMAX=0
+  s1=0; s2=0; s3=0; s4=0
+  h1=1; h2=2; h3=3; h4=4
+
+  mkdir -p "$TMPDIR" 2>/dev/null || true
+  listf="$TMPDIR/sys-wg-junk-list.txt"
+  sys_wg_list "$listf" || : > "$listf"
+  if [ ! -s "$listf" ]; then
+    error "Нет системных Wireguard*."
+    return 1
+  fi
+
+  echo
+  printf '%s\n' "${BOLD}Системный туннель для junk:${NC}"
+  i=0
+  while IFS='|' read -r name desc addr state || [ -n "$name" ]; do
+    [ -n "$name" ] || continue
+    i=$((i + 1))
+    printf '  %s%d)%s  %s' "$BOLD" "$i" "$NC" "$name"
+    [ -n "$desc" ] && [ "$desc" != "$name" ] && printf ' · %s' "$desc"
+    [ -n "$addr" ] && printf ' · %s' "$addr"
+    printf '  %s[%s]%s\n' "$DIM" "${state:-?}" "$NC"
+  done < "$listf"
+  echo "  0) Отмена"
+  echo
+  printf '  %sВыбор:%s ' "$BOLD" "$NC"
+  sel=$(read_choice)
+  echo
+  case "$sel" in
+    0|"") info "Отменено."; return 0 ;;
+    *[!0-9]*) warn "Неверный выбор."; return 1 ;;
+  esac
+  if [ "$sel" -lt 1 ] || [ "$sel" -gt "$i" ]; then
+    warn "Неверный номер."
+    return 1
+  fi
+  ifname=$(sed -n "${sel}p" "$listf" | cut -d'|' -f1)
+  desc=$(sed -n "${sel}p" "$listf" | cut -d'|' -f2)
+
+  info "Остановка $ifname (перед ASC)..."
+  ndmc_cli "interface $ifname down" >/dev/null 2>&1 || true
+  sleep 1
+
+  _asc_ok=0
+  if [ -n "$I1" ]; then
+    if ndmc_cli "interface $ifname wireguard asc $JC $JMIN $JMAX $s1 $s2 $h1 $h2 $h3 $h4 $s3 $s4 \"$I1\" \"\" \"\" \"\" \"\"" >/dev/null 2>&1; then
+      _asc_ok=1
+      info "ASC + I1 → $ifname ($desc)"
+    fi
+  fi
+  if [ "$_asc_ok" != "1" ]; then
+    if ndmc_cli "interface $ifname wireguard asc $JC $JMIN $JMAX $s1 $s2 $h1 $h2 $h3 $h4" >/dev/null 2>&1; then
+      _asc_ok=1
+      info "ASC (без I1) → $ifname"
+      [ -n "$I1" ] && warn "I1 не принят CLI — веб-импорт conf надёжнее."
+    else
+      error "ASC не принят для $ifname."
+      ndmc_cli "interface $ifname up" >/dev/null 2>&1 || true
+      return 1
+    fi
+  fi
+
+  ndmc_cli "interface $ifname up" >/dev/null 2>&1 || warn "interface up — проверьте статус."
+  ndmc_cli "system configuration save" >/dev/null 2>&1 || true
+  info "Junk применён к системному $ifname. Проверка: п.6"
+  return 0
+}
+
 # Применить сохранённый junk к conf и/или туннелю
 do_apply_junk() {
+
   echo
   info "Применение junk-параметров"
   if ! load_junk_params; then
@@ -867,7 +946,12 @@ do_apply_junk() {
   if is_awg_manager_installed; then
     echo "  2) conf + replace в туннель awg-manager"
   else
-    printf '  %s2) conf + replace в туннель%s  %s(нужен awg-manager)%s\n' "$DIM" "$NC" "$DIM" "$NC"
+    printf '  %s2) conf + replace в awg-manager%s  %s(не установлен)%s\n' "$DIM" "$NC" "$DIM" "$NC"
+  fi
+  if command -v ndmc >/dev/null 2>&1; then
+    echo "  3) conf + системный WireGuard (ASC CLI)"
+  else
+    printf '  %s3) conf + системный WireGuard%s  %s(нет ndmc)%s\n' "$DIM" "$NC" "$DIM" "$NC"
   fi
   echo "  0) Отмена"
   echo
@@ -895,6 +979,17 @@ do_apply_junk() {
       fi
       patch_conf_junk "$CONF_OUT" || return 1
       awg_replace_conf_file "$CONF_OUT" || return 1
+      return 0
+      ;;
+    3)
+      if ! command -v ndmc >/dev/null 2>&1; then
+        error "ndmc не найден."
+        return 1
+      fi
+      if has_conf; then
+        patch_conf_junk "$CONF_OUT" || true
+      fi
+      sys_wg_apply_junk || return 1
       return 0
       ;;
     *) warn "Неверный выбор."; return 1 ;;
