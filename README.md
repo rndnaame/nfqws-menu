@@ -4,7 +4,7 @@
 
 Репозиторий также служит хранилищем готовых **стратегий** обхода DPI, **blobs** и **lists**.
 
-- Скрипт: `nfqws-menu.sh` (текущая версия **0.11.03**)
+- Скрипт: `nfqws-menu.sh` (текущая версия **0.11.08**)
 - Стратегии: `strategies/`
 - Hosts: `hosts`
 - Контрольные суммы: `SHA256SUMS`, `strategies/blobs/SHA256SUMS`
@@ -22,6 +22,8 @@
 Стратегии в этом репозитории сделаны на базе проекта\
 [**Flowseal/zapret-discord-youtube**](https://github.com/Flowseal/zapret-discord-youtube)\
 и адаптированы под формат конфигов `nfqws-keenetic` / `nfqws2-keenetic`.
+
+Актуальный набор **nfqws2** синхронизирован с Windows-бандлом **Flowseal 1.10.4** (конфиги, blobs, lists, `strategies/lua/`).
 
 Подготовлены пользователем [**@Nare51**](https://github.com/Nare51) с использованием искусственного интеллекта.
 
@@ -61,13 +63,27 @@ wget -O /opt/nfqws-menu.sh https://raw.githubusercontent.com/rndnaame/nfqws-menu
 
 ### 3. Быстрый запуск `menu`
 
-После первого запуска создаётся symlink:
+После первого запуска создаётся symlink `/opt/bin/menu` → `/opt/nfqws-menu.sh`:
 
 ```bash
-menu
+menu                 # интерактивное меню
+menu help            # / menu -h — список пунктов и алиасов
 ```
 
-(`/opt/bin/menu` → `/opt/nfqws-menu.sh`)
+**Прямой запуск пункта** (без входа в меню) — номер или короткое имя:
+
+```bash
+menu 18              # warpscout
+menu warpscout       # то же (алиасы: warp)
+menu firc            # = 17
+menu awg             # = 11 (алиасы: awgm, awg-manager)
+menu nfqws           # = 1
+menu u               # / menu U — обновить пакеты Entware
+menu S               # сервисные утилиты
+menu 99              # обновить сам скрипт меню
+```
+
+Другие алиасы: `dpi`, `keenkit`, `usque`, `telemt`, `tgws`, `antiscan`/`ascn`, `rkn`, `strategy`, `hosts`, `discord`, … — полный список: `menu help`.
 
 ---
 
@@ -79,7 +95,7 @@ menu
 2. Заголовок: **Модель / Title / ARCH** из RCI (`/rci/show/version`). ARCH зелёный (из opkg) или жёлтый (из conf/uname). Если в RCI нет `opkg-kmod-netfilter` — красное предупреждение установить «Модули ядра подсистемы Netfilter».
 3. Показывает **только установленные** компоненты (версии и статус) одним проходом awk по **opkg status** + **ps** + кэш обновлений (без `opkg list-installed` на каждом кадре):
    - nfqws / nfqws2 / web / **nfqws2-ui**, usque-keenetic, **firc**, **antiscan** (⚡ по `/tmp/ascn.run`), magitrickle, **tg-ws-proxy-rs**;
-   - dpi-detector, awg-manager (⚡ при sing-box / amneziawg), KeenKit, telemt / telemt-panel, opera-proxy, cron, dropbear и др. init.d;
+   - dpi-detector, awg-manager (⚡ при **sing-box** / **awgm-box** / amneziawg), KeenKit, telemt / telemt-panel, opera-proxy, cron, dropbear и др. init.d;
    - **⚡** — сервис запущен; **⭡** — доступна более новая версия (фоновая проверка, **TTL 10 мин**, перерисовка меню без Enter).
 4. Интерфейс **RU / EN** (пункт **77**): подписи меню и общие промпты (`Your choice [0]:` / `Ваш выбор [0]:`). Подпись `Language: RU|EN` всегда латиницей (удобно для Telnet).
 5. Предлагает меню:
@@ -567,11 +583,23 @@ curl -fsSL https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/installer_
 <details>
 <summary><strong>Недавние версии (0.11.x / 0.10.x)</strong> — нажмите, чтобы развернуть</summary>
 
+### 0.11.08
+- **CLI aliases** — `menu firc` / `awg`/`awgm` / `warp`/`warpscout` / `nfqws` и др.; `menu help` / `-h`
+
+### 0.11.07
+- **CLI** — быстрый запуск пункта: `menu 18`, `menu u`, `menu S` (`run_menu_choice`)
+
+### 0.11.06
+- **awgm-box** — бинарь SB с релиза 41 (`/opt/etc/awg-manager/singbox/awgm-box`); старый `sing-box` тоже поддерживается
+
+### 0.11.04 – 0.11.05
+- **U**: прогон awg-compressed при наличии SB даже если awg актуален; чистка неиспользуемых констант
+
 ### 0.11.03
-- **U / awg UPX auto** — при наличии `sing-box` рядом с awg-manager: `INSTALL_AWG=1 INSTALL_SB=1` (оба пакета через awg-compressed)
+- **U / awg UPX auto** — `INSTALL_AWG=1 INSTALL_SB=1` при sing-box рядом с awg-manager
 
 ### 0.11.02
-- линейка **0.11.x** (см. [CHANGELOG.md](CHANGELOG.md) для полного списка)
+- линейка **0.11.x** (см. [CHANGELOG.md](CHANGELOG.md))
 
 ### 0.10.35 – 0.10.36
 - **U** — тихий opkg (без простыни Downloading); AWG/dpi только если remote новее; авто-UPX без tty-промптов; успех по смене версии

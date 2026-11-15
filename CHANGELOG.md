@@ -1,23 +1,3 @@
-### 0.11.08
-
-- **CLI aliases** — `menu firc` / `awg`/`awgm` / `warp`/`warpscout` / `nfqws` и др.; `menu help` / `-h` со списком пунктов
-
-### 0.11.07
-
-- **CLI** — быстрый запуск пункта: `menu 18`, `menu u` / `menu U`, `menu S`, `menu 99` (`run_menu_choice`); `menu -h` — справка
-
-### 0.11.06
-
-- **awg / sing-box** — с релиза **41** бинарь `awgm-box` (`/opt/etc/awg-manager/singbox/awgm-box`, [hoaxisr/awgm-box](https://github.com/hoaxisr/awgm-box)); статус, U-auto и версия учитывают `awgm-box` и старый `sing-box`
-
-### 0.11.05
-
-- удалены неиспользуемые константы: `REPO_URL`, `TELEMT_SYSTEMCTL_URL`, `TELEMT_JOURNALCTL_URL`
-
-### 0.11.04
-
-- **U / awg UPX auto** — прогон awg-compressed не только при новой версии awg, но и если стоит **sing-box** (иначе SB не обновлялся при актуальном awg)
-
 ### 0.11.03
 
 - **U / awg UPX auto** — если есть `sing-box` рядом с awg-manager → `INSTALL_AWG=1 INSTALL_SB=1` (оба), без порога размера UPX
@@ -29,6 +9,7 @@
 
 ### Не выпущено
 
+- **strategies/nfqws2** — пакет Flowseal **1.10.4** (NFQWS2 / Netcraze): обновлены standard-конфиги (alt…, simple_fake*, fake_tls_auto*, exp, **general**), blobs (в т.ч. `legacy_*`), lists, `strategies/lua/` (zapret-lib/antidpi/auto + flowseal-compat), game-profiles; кастомные conf (MartinBacker, Uvvi2, …) не тронуты. Подготовка [@Nare51](https://github.com/Nare51)
 - **п. 19 Antiscan** — `installer_antiscan.sh`: установка из opkg-репозитория [Antiscan](https://github.com/dimon27254/antiscan) (зеркало — по выбору), проверка компонента Netfilter, статус, start/stop/restart, настройка `ISP_INTERFACES` / `PORTS` / `PORTS_FORWARDED` с подсказкой WAN и бэкапом, `antiscan edit config`, списки блокировки, обновление и удаление
 - **show_installed** — строка `antiscan` (⚡ по `/tmp/ascn.run`), `S99ascn` не дублируется в «прочие init.d»
 - тесты: `tests/antiscan-installer.sh` (заглушки opkg / RCI / iptables / ipset) по поведению Antiscan 1.10.6: состояние правил, `/tmp/ascn.lock`, кэш индексов opkg

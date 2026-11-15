@@ -1,0 +1,208 @@
+{
+  "configs": [
+    {
+      "config": "alt.conf",
+      "shell_syntax": "PASS",
+      "shell_expansion": "PASS",
+      "service_settings": "PASS",
+      "blob_and_list_references": "PASS",
+      "source_strategy_sequences": "PASS",
+      "effective_active_profiles": 11
+    },
+    {
+      "config": "alt10.conf",
+      "shell_syntax": "PASS",
+      "shell_expansion": "PASS",
+      "service_settings": "PASS",
+      "blob_and_list_references": "PASS",
+      "source_strategy_sequences": "PASS",
+      "effective_active_profiles": 11
+    },
+    {
+      "config": "alt11.conf",
+      "shell_syntax": "PASS",
+      "shell_expansion": "PASS",
+      "service_settings": "PASS",
+      "blob_and_list_references": "PASS",
+      "source_strategy_sequences": "PASS",
+      "effective_active_profiles": 11
+    },
+    {
+      "config": "alt12.conf",
+      "shell_syntax": "PASS",
+      "shell_expansion": "PASS",
+      "service_settings": "PASS",
+      "blob_and_list_references": "PASS",
+      "source_strategy_sequences": "PASS",
+      "effective_active_profiles": 11
+    },
+    {
+      "config": "alt13.conf",
+      "shell_syntax": "PASS",
+      "shell_expansion": "PASS",
+      "service_settings": "PASS",
+      "blob_and_list_references": "PASS",
+      "source_strategy_sequences": "PASS",
+      "effective_active_profiles": 11
+    },
+    {
+      "config": "alt2.conf",
+      "shell_syntax": "PASS",
+      "shell_expansion": "PASS",
+      "service_settings": "PASS",
+      "blob_and_list_references": "PASS",
+      "source_strategy_sequences": "PASS",
+      "effective_active_profiles": 11
+    },
+    {
+      "config": "alt3.conf",
+      "shell_syntax": "PASS",
+      "shell_expansion": "PASS",
+      "service_settings": "PASS",
+      "blob_and_list_references": "PASS",
+      "source_strategy_sequences": "PASS",
+      "effective_active_profiles": 11
+    },
+    {
+      "config": "alt4.conf",
+      "shell_syntax": "PASS",
+      "shell_expansion": "PASS",
+      "service_settings": "PASS",
+      "blob_and_list_references": "PASS",
+      "source_strategy_sequences": "PASS",
+      "effective_active_profiles": 11
+    },
+    {
+      "config": "alt5.conf",
+      "shell_syntax": "PASS",
+      "shell_expansion": "PASS",
+      "service_settings": "PASS",
+      "blob_and_list_references": "PASS",
+      "source_strategy_sequences": "PASS",
+      "effective_active_profiles": 7
+    },
+    {
+      "config": "alt6.conf",
+      "shell_syntax": "PASS",
+      "shell_expansion": "PASS",
+      "service_settings": "PASS",
+      "blob_and_list_references": "PASS",
+      "source_strategy_sequences": "PASS",
+      "effective_active_profiles": 11
+    },
+    {
+      "config": "alt7.conf",
+      "shell_syntax": "PASS",
+      "shell_expansion": "PASS",
+      "service_settings": "PASS",
+      "blob_and_list_references": "PASS",
+      "source_strategy_sequences": "PASS",
+      "effective_active_profiles": 11
+    },
+    {
+      "config": "alt8.conf",
+      "shell_syntax": "PASS",
+      "shell_expansion": "PASS",
+      "service_settings": "PASS",
+      "blob_and_list_references": "PASS",
+      "source_strategy_sequences": "PASS",
+      "effective_active_profiles": 11
+    },
+    {
+      "config": "alt9.conf",
+      "shell_syntax": "PASS",
+      "shell_expansion": "PASS",
+      "service_settings": "PASS",
+      "blob_and_list_references": "PASS",
+      "source_strategy_sequences": "PASS",
+      "effective_active_profiles": 11
+    },
+    {
+      "config": "exp.conf",
+      "shell_syntax": "PASS",
+      "shell_expansion": "PASS",
+      "service_settings": "PASS",
+      "blob_and_list_references": "PASS",
+      "source_strategy_sequences": "PASS",
+      "effective_active_profiles": 12
+    },
+    {
+      "config": "fake-tls-auto-alt.conf",
+      "shell_syntax": "PASS",
+      "shell_expansion": "PASS",
+      "service_settings": "PASS",
+      "blob_and_list_references": "PASS",
+      "source_strategy_sequences": "PASS",
+      "effective_active_profiles": 11
+    },
+    {
+      "config": "fake-tls-auto-alt2.conf",
+      "shell_syntax": "PASS",
+      "shell_expansion": "PASS",
+      "service_settings": "PASS",
+      "blob_and_list_references": "PASS",
+      "source_strategy_sequences": "PASS",
+      "effective_active_profiles": 11
+    },
+    {
+      "config": "fake-tls-auto-alt3.conf",
+      "shell_syntax": "PASS",
+      "shell_expansion": "PASS",
+      "service_settings": "PASS",
+      "blob_and_list_references": "PASS",
+      "source_strategy_sequences": "PASS",
+      "effective_active_profiles": 11
+    },
+    {
+      "config": "fake-tls-auto.conf",
+      "shell_syntax": "PASS",
+      "shell_expansion": "PASS",
+      "service_settings": "PASS",
+      "blob_and_list_references": "PASS",
+      "source_strategy_sequences": "PASS",
+      "effective_active_profiles": 11
+    },
+    {
+      "config": "simple-fake-alt.conf",
+      "shell_syntax": "PASS",
+      "shell_expansion": "PASS",
+      "service_settings": "PASS",
+      "blob_and_list_references": "PASS",
+      "source_strategy_sequences": "PASS",
+      "effective_active_profiles": 11
+    },
+    {
+      "config": "simple-fake-alt2.conf",
+      "shell_syntax": "PASS",
+      "shell_expansion": "PASS",
+      "service_settings": "PASS",
+      "blob_and_list_references": "PASS",
+      "source_strategy_sequences": "PASS",
+      "effective_active_profiles": 11
+    },
+    {
+      "config": "simple-fake.conf",
+      "shell_syntax": "PASS",
+      "shell_expansion": "PASS",
+      "service_settings": "PASS",
+      "blob_and_list_references": "PASS",
+      "source_strategy_sequences": "PASS",
+      "effective_active_profiles": 11
+    },
+    {
+      "config": "general.conf",
+      "shell_syntax": "PASS",
+      "shell_expansion": "PASS",
+      "service_settings": "PASS",
+      "blob_and_list_references": "PASS",
+      "source_strategy_sequences": "PASS",
+      "effective_active_profiles": 11
+    }
+  ],
+  "lua_syntax": "PASS: LuaJIT 2.1 compilation of four files",
+  "original_strategy_profiles_preserved": 195,
+  "source_blobs": "PASS: byte-identical",
+  "native_nfqws2_dry_run": "Not run; target Linux/Netcraze runtime unavailable",
+  "router_network_test": "Not run",
+  "service_assembly": "CUSTOM -> UDP -> QUIC + EXTRA -> HTTP(S) + EXTRA; BASE passed first; IPSET automatic cloning disabled"
+}
