@@ -19,7 +19,7 @@
 #   sh installer_warpscout.sh
 #   curl -fsSL https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/installer_warpscout.sh | sh
 
-SCRIPT_VERSION="0.1.88"
+SCRIPT_VERSION="0.1.90"
 
 # ANSI (portable для ash/BusyBox)
 RED=$(printf '\033[0;31m')
@@ -1427,6 +1427,7 @@ do_scan() {
   fi
 
   if has_conf; then
+    ensure_conf_keenetic_fields "$CONF_OUT" || true
     info "Конфиг лучшего эндпоинта: $CONF_OUT"
     printf '%s\n' "${DIM}--- начало conf ---${NC}"
     head -n 40 "$CONF_OUT" 2>/dev/null || true
@@ -2173,6 +2174,7 @@ sys_wg_apply() {
     error "ndmc не найден — системный WireGuard недоступен."
     return 1
   fi
+  ensure_conf_keenetic_fields "$conf" || true
   if ! sys_wg_parse_conf "$conf"; then
     error "Не удалось разобрать conf (нужны PrivateKey, PublicKey, Endpoint)."
     return 1
@@ -2188,14 +2190,33 @@ sys_wg_apply() {
   info "  ASC jc=${SYS_WG_JC} jmin=${SYS_WG_JMIN} jmax=${SYS_WG_JMAX}"
 
   # Создать/открыть интерфейс
-  ndmc_cli "interface $ifname" >/dev/null 2>&1 || true
+  _ndmc_out=$(ndmc_cli "interface $ifname" 2>&1) || true
   ndmc_cli "interface $ifname description $desc" >/dev/null 2>&1 || true
 
-  # Ключ интерфейса
-  if ! ndmc_cli "interface $ifname wireguard security-key $SYS_WG_PRIV" >/dev/null 2>&1; then
-    error "ndmc: не удалось задать security-key (компонент WireGuard установлен?)."
+  # Ключ: CLI — private-key (не security-key); fallback через RCI
+  _ok_key=0
+  _ndmc_out=""
+  if _ndmc_out=$(ndmc_cli "interface $ifname wireguard private-key $SYS_WG_PRIV" 2>&1); then
+    _ok_key=1
+  elif command -v curl >/dev/null 2>&1; then
+    # RCI POST (forum.keenetic: wireguard.private-key.private-key)
+    _rci_body=$(printf '[{"wireguard":{"private-key":{"private-key":"%s"}}}]' "$SYS_WG_PRIV")
+    _rci_resp=$(curl -sS --connect-timeout 2 --max-time 5 \
+      -X POST "http://127.0.0.1:79/rci/interface/$ifname" \
+      -H "Content-Type: application/json" \
+      -d "$_rci_body" 2>/dev/null) || _rci_resp=""
+    if ! printf '%s' "$_rci_resp" | grep -qE '"status"[[:space:]]*:[[:space:]]*"error"'; then
+      _ok_key=1
+    fi
+  fi
+  if [ "$_ok_key" != "1" ]; then
+    error "Не удалось задать private-key для $ifname."
+    [ -n "$_ndmc_out" ] && printf '%s\n' "${DIM}$_ndmc_out${NC}" | head -c 300 && echo
+    error "Проверьте: компонент WireGuard VPN (Управление → Компоненты)."
+    error "Или: веб → Другие подключения → WireGuard → Загрузить из файла."
     return 1
   fi
+  info "private-key задан."
 
   # Адрес / MTU
   ndmc_cli "interface $ifname ip address $SYS_WG_ADDR 255.255.255.255" >/dev/null 2>&1 || \
@@ -2203,10 +2224,10 @@ sys_wg_apply() {
     warn "Не удалось задать ip address (проверьте вручную)."
   ndmc_cli "interface $ifname ip mtu $SYS_WG_MTU" >/dev/null 2>&1 || true
 
-  # Peer: снести старых сложно; задаём нужного
+  # Peer
   ndmc_cli "interface $ifname wireguard peer $SYS_WG_PUB" >/dev/null 2>&1 || true
   if ! ndmc_cli "interface $ifname wireguard peer $SYS_WG_PUB endpoint $SYS_WG_EP_HOST $SYS_WG_EP_PORT" >/dev/null 2>&1; then
-    error "ndmc: peer endpoint не принят."
+    error "ndmc: peer endpoint не принят ($SYS_WG_EP_HOST $SYS_WG_EP_PORT)."
     return 1
   fi
   ndmc_cli "interface $ifname wireguard peer $SYS_WG_PUB allow-ips 0.0.0.0/0" >/dev/null 2>&1 || \
@@ -2220,14 +2241,12 @@ sys_wg_apply() {
   else
     info "ASC задан (без I1 — в CLI часто не проходит)."
     if [ -n "$SYS_WG_I1" ]; then
-      warn "I1 в conf есть (${#SYS_WG_I1} симв.) — для system обычно задают через импорт .conf в веб-UI,"
-      warn "  либо прошивку с расширенным ASC. При проблемах с DPI: п.4 junk → AWG-M NativeWG."
+      warn "I1 в conf есть (${#SYS_WG_I1} симв.) — при DPI: веб-импорт conf или AWG-M NativeWG."
     fi
   fi
 
   # Поднять
   ndmc_cli "interface $ifname up" >/dev/null 2>&1 || warn "interface up — проверьте статус."
-  # «Для выхода в интернет» — по возможности
   ndmc_cli "interface $ifname ip global" >/dev/null 2>&1 || true
 
   if ndmc_cli "system configuration save" >/dev/null 2>&1; then
@@ -2265,6 +2284,7 @@ do_apply_system_wg() {
     error "Не удалось подставить Endpoint."
     return 1
   fi
+  ensure_conf_keenetic_fields "$conf_use" || true
   # синхронизируем основной conf
   cp -f "$conf_use" "$CONF_OUT" 2>/dev/null || true
   info "В conf: Endpoint = $SELECTED_EP"
@@ -2449,6 +2469,8 @@ do_apply_awg() {
     error "Не удалось подставить Endpoint = $SELECTED_EP в conf."
     return 1
   fi
+  ensure_conf_keenetic_fields "$conf_use" || true
+  ensure_conf_keenetic_fields "$CONF_OUT" || true
   info "В $CONF_OUT: Endpoint = $SELECTED_EP"
 
   # 2) API
@@ -3058,8 +3080,57 @@ do_remove() {
 # ---------------------------------------------------------------------------
 
 
+# Дописать S1–S4 / H1–H4 в conf (иначе Keenetic WebUI не импортирует warpscout conf)
+# По отчётам: после I1 (или перед [Peer])
+ensure_conf_keenetic_fields() {
+  conf="$1"
+  [ -f "$conf" ] || return 1
+  has_s1=0
+  has_h1=0
+  grep -qiE '^[[:space:]]*S1[[:space:]]*=' "$conf" 2>/dev/null && has_s1=1
+  grep -qiE '^[[:space:]]*H1[[:space:]]*=' "$conf" 2>/dev/null && has_h1=1
+  [ "$has_s1" = "1" ] && [ "$has_h1" = "1" ] && return 0
+
+  tmp="$conf.keen.$$"
+  awk '
+    BEGIN { added=0 }
+    /^[[:space:]]*\[Peer\]/ {
+      if (!added) {
+        print "S1 = 0"
+        print "S2 = 0"
+        print "S3 = 0"
+        print "S4 = 0"
+        print "H1 = 1"
+        print "H2 = 2"
+        print "H3 = 3"
+        print "H4 = 4"
+        added=1
+      }
+      print
+      next
+    }
+    { print }
+    END {
+      if (!added) {
+        print "S1 = 0"
+        print "S2 = 0"
+        print "S3 = 0"
+        print "S4 = 0"
+        print "H1 = 1"
+        print "H2 = 2"
+        print "H3 = 3"
+        print "H4 = 4"
+      }
+    }
+  ' "$conf" > "$tmp" 2>/dev/null || { rm -f "$tmp"; return 1; }
+  mv -f "$tmp" "$conf" 2>/dev/null || { cp -f "$tmp" "$conf"; rm -f "$tmp"; }
+  info "В conf добавлены S1–S4=0, H1–H4=1..4 (импорт Keenetic / Amnezia)."
+  return 0
+}
+
 # Conf для QR: стандартный вид + S/H (Amnezia) + MTU/DNS
 conf_for_qr() {
+
   conf="$1"
   [ -f "$conf" ] || return 1
   _pk=$(grep -iE '^[[:space:]]*PrivateKey[[:space:]]*=' "$conf" | head -1 | sed 's/^[^=]*=[[:space:]]*//;s/[[:space:]]*$//')
@@ -3088,9 +3159,9 @@ conf_for_qr() {
     [ -n "$_jc" ] && printf 'Jc = %s\n' "$_jc"
     [ -n "$_jmin" ] && printf 'Jmin = %s\n' "$_jmin"
     [ -n "$_jmax" ] && printf 'Jmax = %s\n' "$_jmax"
+    [ -n "$_i1" ] && printf 'I1 = %s\n' "$_i1"
     printf 'S1 = 0\nS2 = 0\nS3 = 0\nS4 = 0\n'
     printf 'H1 = 1\nH2 = 2\nH3 = 3\nH4 = 4\n'
-    [ -n "$_i1" ] && printf 'I1 = %s\n' "$_i1"
     printf '%s\n' "[Peer]"
     printf 'PublicKey = %s\n' "$_pub"
     printf 'Endpoint = %s\n' "$_ep"
@@ -3159,6 +3230,7 @@ do_show_conf() {
     error "Нет conf: $CONF_OUT (сначала п.3 scan)."
     return 1
   fi
+  ensure_conf_keenetic_fields "$CONF_OUT" || true
   sz=$(wc -c < "$CONF_OUT" 2>/dev/null | tr -d ' ')
   case "$sz" in ''|*[!0-9]*) sz=0 ;; esac
   info "Файл: $CONF_OUT (${sz} байт)"
