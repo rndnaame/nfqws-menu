@@ -19,7 +19,7 @@
 #   sh installer_warpscout.sh
 #   curl -fsSL https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/installer_warpscout.sh | sh
 
-SCRIPT_VERSION="0.1.92"
+SCRIPT_VERSION="0.1.93"
 
 # ANSI (portable для ash/BusyBox)
 RED=$(printf '\033[0;31m')
@@ -2266,19 +2266,33 @@ sys_wg_apply() {
   ndmc_cli "interface $ifname wireguard peer $SYS_WG_PUB keepalive-interval $SYS_WG_KEEP" >/dev/null 2>&1 || \
     ndmc_cli "interface $ifname wireguard peer $SYS_WG_PUB keepalive $SYS_WG_KEEP" >/dev/null 2>&1 || true
 
-  # ASC (Amnezia) — базовый набор; I1 часто ломает CLI из‑за <> и пробелов
-  if ! ndmc_cli "interface $ifname wireguard asc $SYS_WG_JC $SYS_WG_JMIN $SYS_WG_JMAX $SYS_WG_S1 $SYS_WG_S2 $SYS_WG_H1 $SYS_WG_H2 $SYS_WG_H3 $SYS_WG_H4" >/dev/null 2>&1; then
-    warn "ASC (jc/jmin/…) не принят — нужна прошивка с AmneziaWG / задайте вручную."
-  else
-    info "ASC задан (без I1 — в CLI часто не проходит)."
-    if [ -n "$SYS_WG_I1" ]; then
-      warn "I1 в conf есть (${#SYS_WG_I1} симв.) — при DPI: веб-импорт conf или AWG-M NativeWG."
+  # ASC: базовый 8-arg; при наличии I1 — расширенный (s3 s4 i1 …) в кавычках
+  _asc_ok=0
+  if [ -n "$SYS_WG_I1" ]; then
+    # Keenetic 5.1+: asc jc jmin jmax s1 s2 h1 h2 h3 h4 [s3 s4 i1 i2 i3 i4 i5]
+    if ndmc_cli "interface $ifname wireguard asc $SYS_WG_JC $SYS_WG_JMIN $SYS_WG_JMAX $SYS_WG_S1 $SYS_WG_S2 $SYS_WG_H1 $SYS_WG_H2 $SYS_WG_H3 $SYS_WG_H4 $SYS_WG_S3 $SYS_WG_S4 \"$SYS_WG_I1\" \"\" \"\" \"\" \"\"" >/dev/null 2>&1; then
+      _asc_ok=1
+      info "ASC + I1 заданы (расширенный CLI)."
+    fi
+  fi
+  if [ "$_asc_ok" != "1" ]; then
+    if ndmc_cli "interface $ifname wireguard asc $SYS_WG_JC $SYS_WG_JMIN $SYS_WG_JMAX $SYS_WG_S1 $SYS_WG_S2 $SYS_WG_H1 $SYS_WG_H2 $SYS_WG_H3 $SYS_WG_H4" >/dev/null 2>&1; then
+      _asc_ok=1
+      info "ASC задан (jc/jmin/jmax/H)."
+      if [ -n "$SYS_WG_I1" ]; then
+        warn "I1 не принят CLI (${#SYS_WG_I1} симв.) — для DPI:"
+        warn "  веб → WireGuard → «Загрузить из файла»: $conf"
+        warn "  или п.5 → awg-manager (NativeWG)."
+      fi
+    else
+      warn "ASC не принят — прошивка без AmneziaWG / задайте вручную."
     fi
   fi
 
-  # Поднять
+  # Поднять + «для интернета» (ip global <priority>, не без аргумента)
   ndmc_cli "interface $ifname up" >/dev/null 2>&1 || warn "interface up — проверьте статус."
-  ndmc_cli "interface $ifname ip global" >/dev/null 2>&1 || true
+  ndmc_cli "interface $ifname ip global 1000" >/dev/null 2>&1 ||     ndmc_cli "interface $ifname ip global" >/dev/null 2>&1 || true
+  ndmc_cli "interface $ifname security-level public" >/dev/null 2>&1 || true
 
   if ndmc_cli "system configuration save" >/dev/null 2>&1; then
     info "Конфигурация сохранена (system configuration save)."
@@ -2287,8 +2301,10 @@ sys_wg_apply() {
   fi
 
   info "Готово: $ifname ← $desc"
-  info "Проверьте: веб → Другие подключения → WireGuard → $ifname"
-  info "или: п.6 Проверка туннеля (если интерфейс виден в системе)."
+  if [ -n "$SYS_WG_I1" ] && [ "$_asc_ok" = "1" ]; then
+    info "Если handshake не держится — импорт conf из файла в веб-UI надёжнее для I1."
+  fi
+  info "Проверьте: веб → WireGuard → $ifname  ·  или п.6"
   return 0
 }
 
