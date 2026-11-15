@@ -10,7 +10,7 @@
 
 set -e
 
-SCRIPT_VERSION="0.11.09"
+SCRIPT_VERSION="0.11.10"
 
 RAW_BASE="https://raw.githubusercontent.com/rndnaame/nfqws-menu/main"
 STRATEGIES_API="https://api.github.com/repos/rndnaame/nfqws-menu/contents/strategies"
@@ -2184,6 +2184,22 @@ check_blobs() {
 # $3=1 — сразу скачать отсутствующие без вопроса
 check_lists() { check_conf_files "lists" "$2" extract_list_paths "lists" "Скачать отсутствующие lists из strategies/lists/?" "${3:-0}"; }
 
+
+# Создать отсутствующие list-файлы из conf (пустые), чтобы nfqws2 не падал на hostlist
+ensure_conf_list_files() {
+  local conf="$1" paths path
+  [ -n "$conf" ] && [ -f "$conf" ] || return 0
+  paths=$(extract_list_paths "$conf")
+  [ -n "$paths" ] || return 0
+  for path in $paths; do
+    mkdir -p "$(dirname "$path")"
+    if [ ! -f "$path" ]; then
+      touch "$path"
+      warn "Создан пустой list (отсутствовал): $path"
+    fi
+  done
+}
+
 # Обновить все .list, на которые ссылается конфиг (пути из extract_list_paths).
 # $1=ver  $2=conf
 # auto.list не качается из репозитория (заполняется демоном) — только touch при отсутствии.
@@ -2208,16 +2224,40 @@ update_lists() {
   for path in $paths; do
     name=$(basename "$path")
     mkdir -p "$(dirname "$path")"
-    if [ "$name" = "auto.list" ]; then
-      [ -f "$path" ] || { touch "$path"; info "  создан пустой $path (auto.list — демон)"; }
-      continue
-    fi
+    # auto.list / user-extra / exclude-extra — часто пустые; демон/пользователь наполняет сам
+    case "$name" in
+      auto.list|user-extra.list|exclude-extra.list|ipset_exclude-extra.list)
+        if [ ! -f "$path" ]; then
+          touch "$path"
+          info "  создан пустой $path ($name)"
+        else
+          info "  $name уже есть (не перезаписываем пустым)"
+        fi
+        # всё равно пробуем скачать из репо, если есть непустой
+        if download_file "${RAW_BASE}/strategies/lists/${name}" "/tmp/nfqws-list-$$-$name"; then
+          if [ -s "/tmp/nfqws-list-$$-$name" ]; then
+            mv -f "/tmp/nfqws-list-$$-$name" "$path"
+            info "    → $path (из репозитория)"
+            count=$((count + 1))
+          else
+            rm -f "/tmp/nfqws-list-$$-$name"
+          fi
+        else
+          rm -f "/tmp/nfqws-list-$$-$name"
+        fi
+        continue
+        ;;
+    esac
     info "  $name ..."
     if download_file "${RAW_BASE}/strategies/lists/${name}" "$path"; then
       info "    → $path"
       count=$((count + 1))
     else
-      warn "    не удалось скачать $name (пропуск)"
+      warn "    не удалось скачать $name"
+      if [ ! -f "$path" ]; then
+        touch "$path"
+        warn "    создан пустой $path (иначе nfqws2 не стартует)"
+      fi
     fi
   done
   info "Обновлено lists: $count"
@@ -2393,6 +2433,8 @@ apply_strategy() {
     info "Полное обновление lists пропущено — скачиваем отсутствующие..."
     check_lists "$ver" "$conf_dest" 1
   fi
+  # Любой пропуск/ошибка загрузки не должен оставлять дыры в hostlist
+  ensure_conf_list_files "$conf_dest"
 
   # Восстановить привязку rkn.list в MODE_LIST, если она была до смены стратегии
   if [ "$had_rkn" -eq 1 ]; then

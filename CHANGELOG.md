@@ -7,6 +7,11 @@
 
 История изменений **nfqws-menu**. Актуальная версия скрипта — в [`README.md`](README.md).
 
+### 0.11.10
+
+- **lists** — `user-extra.list` в репозитории; при сбое скачивания / отсутствии list из conf создаётся пустой файл (`ensure_conf_list_files`), чтобы nfqws2 не падал на hostlist
+- **update_lists** — auto/user-extra/exclude-extra/ipset_exclude-extra: touch + опциональная загрузка непустого из репо
+
 ### Не выпущено
 
 - **strategies/nfqws2** — пакет Flowseal **1.10.4** (NFQWS2 / Netcraze): обновлены standard-конфиги (alt…, simple_fake*, fake_tls_auto*, exp, **general**), blobs (в т.ч. `legacy_*`), lists, `strategies/lua/` (zapret-lib/antidpi/auto + flowseal-compat), game-profiles; кастомные conf (MartinBacker, Uvvi2, …) не тронуты. Подготовка [@Nare51](https://github.com/Nare51)
