@@ -19,7 +19,7 @@
 #   sh installer_warpscout.sh
 #   curl -fsSL https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/installer_warpscout.sh | sh
 
-SCRIPT_VERSION="0.1.91"
+SCRIPT_VERSION="0.1.92"
 
 # ANSI (portable для ash/BusyBox)
 RED=$(printf '\033[0;31m')
@@ -2405,9 +2405,16 @@ do_apply_system_wg() {
       cand="172.16.0.$n"
       if ! grep -qxF "$cand" "$usedf" 2>/dev/null; then
         info "Адрес $conf_ip занят → $cand"
-        awg_patch_conf_address "$conf_use" "$cand" 2>/dev/null || \
-          awk -v ip="$cand" 'tolower($0) ~ /^[[:space:]]*address[[:space:]]*=/ { print "Address = " ip "/32"; next } { print }' \
-            "$conf_use" > "$conf_use.addr" && mv -f "$conf_use.addr" "$conf_use"
+        if ! awg_patch_conf_address "$conf_use" "$cand" 2>/dev/null; then
+          tmpa="$conf_use.addr"
+          if awk -v ip="$cand" 'tolower($0) ~ /^[[:space:]]*address[[:space:]]*=/ { print "Address = " ip "/32"; next } { print }' \
+              "$conf_use" > "$tmpa" 2>/dev/null && [ -s "$tmpa" ]; then
+            mv -f "$tmpa" "$conf_use"
+          else
+            rm -f "$tmpa" 2>/dev/null || true
+            warn "Не удалось записать Address=$cand в conf."
+          fi
+        fi
         break
       fi
       n=$((n + 1))
