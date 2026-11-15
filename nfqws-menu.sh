@@ -10,7 +10,7 @@
 
 set -e
 
-SCRIPT_VERSION="0.11.08"
+SCRIPT_VERSION="0.11.09"
 
 RAW_BASE="https://raw.githubusercontent.com/rndnaame/nfqws-menu/main"
 STRATEGIES_API="https://api.github.com/repos/rndnaame/nfqws-menu/contents/strategies"
@@ -4376,6 +4376,19 @@ remove_tg_ws_proxy_rs() {
       info "Каталог $TG_WS_PROXY_RS_CONF_DIR удалён."
     else
       info "Конфиг и секрет оставлены в $TG_WS_PROXY_RS_CONF_DIR."
+    fi
+  fi
+  # install-* содержит копии бинаря — основной расход флеша
+  if [ -d /opt/var/tg-ws-proxy-backups ]; then
+    if confirm_yes "Удалить бэкапы установки (/opt/var/tg-ws-proxy-backups)?"; then
+      rm -rf /opt/var/tg-ws-proxy-backups
+      info "Бэкапы установки удалены."
+    else
+      # оставить только последний install-*
+      # shellcheck disable=SC2012
+      for old in $(ls -1d /opt/var/tg-ws-proxy-backups/install-* 2>/dev/null | sort -r | tail -n +2); do
+        rm -rf "$old"
+      done
     fi
   fi
   return 0

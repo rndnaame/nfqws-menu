@@ -203,15 +203,31 @@ tg_ws_proxy_rs_ensure_secret() {
   return 0
 }
 
-# Бэкапы конфига копятся с каждым подбором (по одному на прогон), поэтому
-# держим последние три — так же, как инсталлер поступает со своими.
+# Бэкапы:
+#  - config.conf.bak.* в /opt/etc/tg-ws-proxy-rs (подбор параметров)
+#  - /opt/var/tg-ws-proxy-backups/install-* (upstream install.sh копирует бинарь)
+# На Keenetic 3 копии install-* легко съедают 10–15 МБ флеша. Держим по 1.
+TG_WS_PROXY_RS_BACKUP_ROOT="/opt/var/tg-ws-proxy-backups"
+
 tg_ws_proxy_rs_prune_backups() {
-  local dir="$TG_WS_PROXY_RS_CONF_DIR" keep=3 old
-  [ -d "$dir" ] || return 0
-  # shellcheck disable=SC2012 # имена однотипные: config.conf.bak.<дата>
-  for old in $(ls -1 "$dir"/config.conf.bak.* 2>/dev/null | sort -r | tail -n +$((keep + 1))); do
-    rm -f "$old"
-  done
+  local dir="$TG_WS_PROXY_RS_CONF_DIR" root="$TG_WS_PROXY_RS_BACKUP_ROOT" keep=1 old n=0
+  # config.bak — только последний
+  if [ -d "$dir" ]; then
+    # shellcheck disable=SC2012
+    for old in $(ls -1 "$dir"/config.conf.bak.* 2>/dev/null | sort -r | tail -n +$((keep + 1))); do
+      rm -f "$old"
+      n=$((n + 1))
+    done
+  fi
+  # install-* — полный бинарь; upstream keep=3 слишком жирно для Entware
+  if [ -d "$root" ]; then
+    # shellcheck disable=SC2012
+    for old in $(ls -1d "$root"/install-* 2>/dev/null | sort -r | tail -n +$((keep + 1))); do
+      rm -rf "$old"
+      n=$((n + 1))
+    done
+  fi
+  [ "$n" -gt 0 ] && info "Очищены старые бэкапы tg-ws-proxy ($n)."
   return 0
 }
 
@@ -461,6 +477,7 @@ tg_ws_proxy_rs_install() {
   else
     info "Установлено: $(tg_ws_proxy_rs_version)"
   fi
+  tg_ws_proxy_rs_prune_backups || true
   tg_ws_proxy_rs_disable_go_init || true
   return 0
 }
@@ -763,6 +780,8 @@ menu_tg_ws_proxy_rs() {
 
   if is_tg_ws_proxy_rs_installed; then
     info "TG WS Proxy Rust — установлено $(tg_ws_proxy_rs_version)"
+    # подчистить install-* / config.bak, если накопились с прошлых прогонов
+    tg_ws_proxy_rs_prune_backups 2>/dev/null || true
     if confirm_yes "Переустановить/обновить из последнего релиза?"; then
       tg_ws_proxy_rs_install || return 1
     fi
@@ -818,6 +837,15 @@ remove_tg_ws_proxy_rs() {
       info "Каталог $TG_WS_PROXY_RS_CONF_DIR удалён."
     else
       info "Конфиг и секрет оставлены в $TG_WS_PROXY_RS_CONF_DIR."
+    fi
+  fi
+  # install-* с копиями бинаря — основной «пожиратель» флеша
+  if [ -d "$TG_WS_PROXY_RS_BACKUP_ROOT" ]; then
+    if confirm_yes "Удалить бэкапы установки ($TG_WS_PROXY_RS_BACKUP_ROOT)?"; then
+      rm -rf "$TG_WS_PROXY_RS_BACKUP_ROOT"
+      info "Бэкапы установки удалены."
+    else
+      tg_ws_proxy_rs_prune_backups || true
     fi
   fi
   return 0
