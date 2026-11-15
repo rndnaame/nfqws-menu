@@ -19,7 +19,7 @@
 #   sh installer_warpscout.sh
 #   curl -fsSL https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/installer_warpscout.sh | sh
 
-SCRIPT_VERSION="0.1.90"
+SCRIPT_VERSION="0.1.91"
 
 # ANSI (portable для ash/BusyBox)
 RED=$(printf '\033[0;31m')
@@ -2055,27 +2055,37 @@ awg_control() {
 sys_wg_list() {
   out="$1"
   : > "$out"
-  rci=$(curl -s --connect-timeout 1 --max-time 3 "http://127.0.0.1:79/rci/show/interface" 2>/dev/null) || rci=""
-  [ -n "$rci" ] || return 1
-  tmpc="$out.rci"
-  printf '%s' "$rci" | tr '{' '\n' > "$tmpc" 2>/dev/null || true
-  while IFS= read -r chunk || [ -n "$chunk" ]; do
-    case "$chunk" in
-      *Wireguard*|*WireGuard*) ;;
-      *) continue ;;
-    esac
-    id=$(printf '%s' "$chunk" | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
-    case "$id" in
-      Wireguard[0-9]*|WireGuard[0-9]*) ;;
-      *) continue ;;
-    esac
-    addr=$(printf '%s' "$chunk" | sed -n 's/.*"address"[[:space:]]*:[[:space:]]*"\([0-9][0-9.]*\)".*/\1/p' | head -1)
-    desc=$(printf '%s' "$chunk" | sed -n 's/.*"description"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
-    state=$(printf '%s' "$chunk" | sed -n 's/.*"state"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
-    [ -z "$state" ] && state=$(printf '%s' "$chunk" | sed -n 's/.*"link"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
-    printf '%s|%s|%s|%s\n' "$id" "${desc:-$id}" "${addr:-}" "${state:-?}" >> "$out"
-  done < "$tmpc"
-  rm -f "$tmpc" 2>/dev/null || true
+  rci=$(curl -s --connect-timeout 1 --max-time 4 "http://127.0.0.1:79/rci/show/interface" 2>/dev/null) || rci=""
+  ids=""
+  if [ -n "$rci" ]; then
+    ids=$(printf '%s' "$rci" | grep -oE '"Wireguard[0-9]+"' | tr -d '"' | sort -u)
+  fi
+  # fallback: имена из sysfs / ip
+  if [ -z "$ids" ]; then
+    for _p in /sys/class/net/Wireguard*; do
+      [ -e "$_p" ] || continue
+      ids="$ids $(basename "$_p")"
+    done
+  fi
+  for id in $ids; do
+    case "$id" in Wireguard[0-9]*|WireGuard[0-9]*) ;; *) continue ;; esac
+    one=$(curl -s --connect-timeout 1 --max-time 2 "http://127.0.0.1:79/rci/show/interface/$id" 2>/dev/null) || one=""
+    [ -n "$one" ] || one=$(printf '%s' "$rci" | tr '}' '\n' | grep -F "\"id\":\"$id\"" | head -1)
+    [ -n "$one" ] || one=$(printf '%s' "$rci" | tr '}' '\n' | grep -F "\"id\": \"$id\"" | head -1)
+    addr=$(printf '%s' "$one" | sed -n 's/.*"address"[[:space:]]*:[[:space:]]*"\([0-9][0-9.]*\)".*/\1/p' | head -1)
+    desc=$(printf '%s' "$one" | sed -n 's/.*"description"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
+    state=$(printf '%s' "$one" | sed -n 's/.*"state"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
+    [ -z "$state" ] && state=$(printf '%s' "$one" | sed -n 's/.*"link"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
+    # живой inet, если RCI без address
+    if [ -z "$addr" ] && command -v ip >/dev/null 2>&1; then
+      addr=$(ip -4 -o addr show dev "$id" 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -1)
+    fi
+    if [ -z "$addr" ] && command -v ifconfig >/dev/null 2>&1; then
+      addr=$(ifconfig "$id" 2>/dev/null | sed -n 's/.*inet addr:\([0-9.]*\).*/\1/p;s/.*inet \([0-9.]*\).*/\1/p' | head -1)
+    fi
+    [ -n "$state" ] || state="?"
+    printf '%s|%s|%s|%s\n' "$id" "${desc:-$id}" "${addr:-}" "$state" >> "$out"
+  done
   [ -s "$out" ]
 }
 
@@ -2224,16 +2234,37 @@ sys_wg_apply() {
     warn "Не удалось задать ip address (проверьте вручную)."
   ndmc_cli "interface $ifname ip mtu $SYS_WG_MTU" >/dev/null 2>&1 || true
 
-  # Peer
+  # Peer (CLI: endpoint host:port одним аргументом — см. CLI manual Keenetic)
   ndmc_cli "interface $ifname wireguard peer $SYS_WG_PUB" >/dev/null 2>&1 || true
-  if ! ndmc_cli "interface $ifname wireguard peer $SYS_WG_PUB endpoint $SYS_WG_EP_HOST $SYS_WG_EP_PORT" >/dev/null 2>&1; then
-    error "ndmc: peer endpoint не принят ($SYS_WG_EP_HOST $SYS_WG_EP_PORT)."
+  _ep_ok=0
+  _ep_out=""
+  if _ep_out=$(ndmc_cli "interface $ifname wireguard peer $SYS_WG_PUB endpoint ${SYS_WG_EP_HOST}:${SYS_WG_EP_PORT}" 2>&1); then
+    _ep_ok=1
+  elif _ep_out=$(ndmc_cli "interface $ifname wireguard peer $SYS_WG_PUB endpoint $SYS_WG_EP_HOST $SYS_WG_EP_PORT" 2>&1); then
+    _ep_ok=1
+  elif command -v curl >/dev/null 2>&1; then
+    # RCI: peer key + endpoint
+    _rci_body=$(printf '[{"wireguard":{"peer":{"key":"%s","endpoint":"%s:%s"}}}]' \
+      "$SYS_WG_PUB" "$SYS_WG_EP_HOST" "$SYS_WG_EP_PORT")
+    _rci_resp=$(curl -sS --connect-timeout 2 --max-time 5 \
+      -X POST "http://127.0.0.1:79/rci/interface/$ifname" \
+      -H "Content-Type: application/json" \
+      -d "$_rci_body" 2>/dev/null) || _rci_resp=""
+    if ! printf '%s' "$_rci_resp" | grep -qE '"status"[[:space:]]*:[[:space:]]*"error"'; then
+      _ep_ok=1
+    fi
+  fi
+  if [ "$_ep_ok" != "1" ]; then
+    error "peer endpoint не принят (${SYS_WG_EP_HOST}:${SYS_WG_EP_PORT})."
+    [ -n "$_ep_out" ] && printf '%s\n' "${DIM}$_ep_out${NC}" | head -c 300 && echo
     return 1
   fi
+  info "peer endpoint ${SYS_WG_EP_HOST}:${SYS_WG_EP_PORT}"
   ndmc_cli "interface $ifname wireguard peer $SYS_WG_PUB allow-ips 0.0.0.0/0" >/dev/null 2>&1 || \
-    ndmc_cli "interface $ifname wireguard peer $SYS_WG_PUB allow-ips 0.0.0.0 0.0.0.0" >/dev/null 2>&1 || \
-    warn "allow-ips 0.0.0.0/0 не принят — задайте в веб-UI."
-  ndmc_cli "interface $ifname wireguard peer $SYS_WG_PUB keepalive $SYS_WG_KEEP" >/dev/null 2>&1 || true
+    ndmc_cli "interface $ifname wireguard peer $SYS_WG_PUB allows 0.0.0.0/0" >/dev/null 2>&1 || \
+    warn "allow-ips не принят — задайте в веб-UI."
+  ndmc_cli "interface $ifname wireguard peer $SYS_WG_PUB keepalive-interval $SYS_WG_KEEP" >/dev/null 2>&1 || \
+    ndmc_cli "interface $ifname wireguard peer $SYS_WG_PUB keepalive $SYS_WG_KEEP" >/dev/null 2>&1 || true
 
   # ASC (Amnezia) — базовый набор; I1 часто ломает CLI из‑за <> и пробелов
   if ! ndmc_cli "interface $ifname wireguard asc $SYS_WG_JC $SYS_WG_JMIN $SYS_WG_JMAX $SYS_WG_S1 $SYS_WG_S2 $SYS_WG_H1 $SYS_WG_H2 $SYS_WG_H3 $SYS_WG_H4" >/dev/null 2>&1; then
@@ -2347,35 +2378,42 @@ do_apply_system_wg() {
     desc="${old_desc:-$desc}"
   fi
 
-  # конфликт адреса: если Address из conf занят другим Wireguard — предложить .3+.4…
+  # конфликт адреса: list (name|desc|addr|state) + live Wireguard/nwg/awg
   conf_ip=$(grep -iE '^[[:space:]]*Address[[:space:]]*=' "$conf_use" 2>/dev/null | head -1 | sed 's/^[^=]*=[[:space:]]*//;s/\/.*//;s/,.*//;s/[[:space:]]//g')
-  if [ -n "$conf_ip" ] && [ -s "$listf" ]; then
-    busy=0
+  [ -n "$conf_ip" ] || conf_ip="172.16.0.2"
+  usedf="$TMPDIR/sys-used-addr.txt"
+  : > "$usedf"
+  if [ -s "$listf" ]; then
     while IFS='|' read -r n d a s || [ -n "$n" ]; do
       [ "$n" = "$ifname" ] && continue
-      [ "$a" = "$conf_ip" ] && busy=1 && break
+      [ -n "$a" ] && printf '%s\n' "$a" >> "$usedf"
     done < "$listf"
-    if [ "$busy" = "1" ]; then
-      n=3
-      while [ "$n" -le 254 ]; do
-        cand="172.16.0.$n"
-        hit=0
-        while IFS='|' read -r n2 d2 a2 s2 || [ -n "$n2" ]; do
-          [ "$a2" = "$cand" ] && hit=1 && break
-        done < "$listf"
-        if [ "$hit" = "0" ]; then
-          info "Адрес $conf_ip занят → $cand"
-          # правка conf_use Address
-          tmpa="$conf_use.addr"
-          awk -v ip="$cand" '
-            tolower($0) ~ /^[[:space:]]*address[[:space:]]*=/ { print "Address = " ip "/32"; next }
-            { print }
-          ' "$conf_use" > "$tmpa" && mv -f "$tmpa" "$conf_use"
-          break
-        fi
-        n=$((n + 1))
-      done
+  fi
+  for _p in /sys/class/net/Wireguard* /sys/class/net/nwg* /sys/class/net/awg*; do
+    [ -e "$_p" ] || continue
+    _b=$(basename "$_p")
+    [ "$_b" = "$ifname" ] && continue
+    _a=""
+    if command -v ip >/dev/null 2>&1; then
+      _a=$(ip -4 -o addr show dev "$_b" 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -1)
     fi
+    [ -n "$_a" ] && printf '%s\n' "$_a" >> "$usedf"
+  done
+  if grep -qxF "$conf_ip" "$usedf" 2>/dev/null; then
+    n=2
+    while [ "$n" -le 254 ]; do
+      cand="172.16.0.$n"
+      if ! grep -qxF "$cand" "$usedf" 2>/dev/null; then
+        info "Адрес $conf_ip занят → $cand"
+        awg_patch_conf_address "$conf_use" "$cand" 2>/dev/null || \
+          awk -v ip="$cand" 'tolower($0) ~ /^[[:space:]]*address[[:space:]]*=/ { print "Address = " ip "/32"; next } { print }' \
+            "$conf_use" > "$conf_use.addr" && mv -f "$conf_use.addr" "$conf_use"
+        break
+      fi
+      n=$((n + 1))
+    done
+  else
+    info "Address $conf_ip свободен (system check)."
   fi
 
   sys_wg_apply "$ifname" "$conf_use" "$desc"
