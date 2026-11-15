@@ -11,7 +11,7 @@
 # 2) Создать аккаунт (warpscout register)
 # 3) Сканирование адресов (AWG → list + conf)
 # 4) Автоматический поиск / apply junk (find-junk)
-# 5) Применить conf в awg-manager (если установлен)
+# 5) Применить conf (awg-manager и/или системный WireGuard NDMS)
 # 6) Проверка туннеля (curl --interface nwg*/awg*)
 # 88) Удаление
 #
@@ -19,7 +19,7 @@
 #   sh installer_warpscout.sh
 #   curl -fsSL https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/installer_warpscout.sh | sh
 
-SCRIPT_VERSION="0.1.85"
+SCRIPT_VERSION="0.1.88"
 
 # ANSI (portable для ash/BusyBox)
 RED=$(printf '\033[0;31m')
@@ -33,6 +33,15 @@ NC=$(printf '\033[0m')
 info()  { printf '%s\n' "${GREEN}[+]${NC} $*"; }
 warn()  { printf '%s\n' "${YELLOW}[!]${NC} $*"; }
 error() { printf '%s\n' "${RED}[!]${NC} $*"; }
+
+# ndmc: системные libs первыми (Entware OpenSSL ломает ndmc)
+ndmc_cli() {
+  if ! command -v ndmc >/dev/null 2>&1; then
+    return 127
+  fi
+  LD_LIBRARY_PATH=/lib:/usr/lib command ndmc -c "$@"
+}
+
 
 # короткий вывод длинного I1
 show_i1_brief() {
@@ -1254,9 +1263,12 @@ do_scan() {
 
   echo
   printf '%s\n' "${BOLD}Ноды Cloudflare:${NC}"
-  echo "  1) Без DME (рекомендуется)"
-  echo "  2) Все ноды"
+  echo "  1) Без DME + быстрый (рекомендуется)"
+  echo "     ${DIM}exclude DME · -n 3 · -gen-i1 random${NC}"
+  echo "  2) Все ноды + быстрый"
+  echo "     ${DIM}-n 3 · -gen-i1 random${NC}"
   echo "  3) Дополнительные параметры"
+  echo "     ${DIM}junk / I1-профиль / глубина${NC}"
   echo "  0) Отмена"
   echo
   printf '  %sВыбор [1]:%s ' "$BOLD" "$NC"
@@ -1266,11 +1278,17 @@ do_scan() {
     0) info "Отменено."; return 0 ;;
     ""|1)
       SCAN_EXCLUDE_NODE="DME"
-      info "Фильтр: без DME · быстрый скан (-n 3)."
+      SCAN_GEN_I1="random"
+      SCAN_N=3
+      SCAN_FULL=0
+      info "Без DME · быстрый (-n 3) · -gen-i1 random"
       ;;
     2)
       SCAN_EXCLUDE_NODE=""
-      info "Фильтр: все ноды · быстрый скан (-n 3)."
+      SCAN_GEN_I1="random"
+      SCAN_N=3
+      SCAN_FULL=0
+      info "Все ноды · быстрый (-n 3) · -gen-i1 random"
       ;;
     3)
       # --- доп. параметры: всегда без DME ---
@@ -1279,15 +1297,15 @@ do_scan() {
 
       # junk
       echo
-      printf '%s\n' "${BOLD}Параметры junk:${NC}"
-      echo "  1) Без кастомных (дефолты warpscout)"
+      printf '%s\n' "${BOLD}Параметры junk (Jc/Jmin/Jmax/I1):${NC}"
+      echo "  1) Дефолты warpscout (без своих)"
       if load_junk_params; then
-        echo "  2) Сохранённые: jc=${JC:-?} jmin=${JMIN:-?} jmax=${JMAX:-?}"
+        echo "  2) Из файла (п.4): jc=${JC:-?} jmin=${JMIN:-?} jmax=${JMAX:-?}"
       else
-        printf '  %s2) Сохранённые%s  %s(нет файла)%s\n' "$DIM" "$NC" "$DIM" "$NC"
+        printf '  %s2) Из файла (п.4)%s  %s— нет warpscout-junk.env%s\n' "$DIM" "$NC" "$DIM" "$NC"
       fi
       if is_awg_manager_installed; then
-        echo "  3) Из рабочего туннеля awg-manager"
+        echo "  3) Взять из рабочего туннеля awg-manager"
       else
         printf '  %s3) Из туннеля awg-manager%s  %s(нет awg-manager)%s\n' "$DIM" "$NC" "$DIM" "$NC"
       fi
@@ -1304,10 +1322,10 @@ do_scan() {
           ;;
         2)
           if ! load_junk_params; then
-            error "Нет сохранённых junk."
+            error "Нет сохранённых junk (сначала п.4 find-junk)."
             return 1
           fi
-          info "Junk: сохранённые (jc=$JC jmin=$JMIN jmax=$JMAX)."
+          info "Junk: из файла (jc=$JC jmin=$JMIN jmax=$JMAX)."
           ;;
         3)
           if ! is_awg_manager_installed; then
@@ -2025,6 +2043,382 @@ awg_control() {
   warn "control/${action} id=${tid}: ${err:-fail}"
   [ -n "$resp" ] && printf '%s\n' "${DIM}$resp${NC}" | head -c 300 && echo
   return 1
+}
+
+
+# ---------------------------------------------------------------------------
+# Системный WireGuard (Keenetic NDMS / ndmc)
+# ---------------------------------------------------------------------------
+
+# Список системных Wireguard* → файл: name|description|address|state
+sys_wg_list() {
+  out="$1"
+  : > "$out"
+  rci=$(curl -s --connect-timeout 1 --max-time 3 "http://127.0.0.1:79/rci/show/interface" 2>/dev/null) || rci=""
+  [ -n "$rci" ] || return 1
+  tmpc="$out.rci"
+  printf '%s' "$rci" | tr '{' '\n' > "$tmpc" 2>/dev/null || true
+  while IFS= read -r chunk || [ -n "$chunk" ]; do
+    case "$chunk" in
+      *Wireguard*|*WireGuard*) ;;
+      *) continue ;;
+    esac
+    id=$(printf '%s' "$chunk" | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
+    case "$id" in
+      Wireguard[0-9]*|WireGuard[0-9]*) ;;
+      *) continue ;;
+    esac
+    addr=$(printf '%s' "$chunk" | sed -n 's/.*"address"[[:space:]]*:[[:space:]]*"\([0-9][0-9.]*\)".*/\1/p' | head -1)
+    desc=$(printf '%s' "$chunk" | sed -n 's/.*"description"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
+    state=$(printf '%s' "$chunk" | sed -n 's/.*"state"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
+    [ -z "$state" ] && state=$(printf '%s' "$chunk" | sed -n 's/.*"link"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
+    printf '%s|%s|%s|%s\n' "$id" "${desc:-$id}" "${addr:-}" "${state:-?}" >> "$out"
+  done < "$tmpc"
+  rm -f "$tmpc" 2>/dev/null || true
+  [ -s "$out" ]
+}
+
+# Свободное имя WireguardN (0..15)
+sys_wg_next_name() {
+  listf="$1"
+  i=0
+  while [ "$i" -le 15 ]; do
+    name="Wireguard$i"
+    if [ -s "$listf" ] && grep -q "^${name}|" "$listf" 2>/dev/null; then
+      i=$((i + 1))
+      continue
+    fi
+    # дополнительно: есть ли в системе
+    if ip link show "$name" >/dev/null 2>&1 || [ -e "/sys/class/net/$name" ]; then
+      i=$((i + 1))
+      continue
+    fi
+    printf '%s\n' "$name"
+    return 0
+  done
+  return 1
+}
+
+# Разбор conf → переменные SYS_WG_*
+sys_wg_parse_conf() {
+  conf="$1"
+  SYS_WG_PRIV=""
+  SYS_WG_PUB=""
+  SYS_WG_ADDR=""
+  SYS_WG_DNS=""
+  SYS_WG_MTU="1280"
+  SYS_WG_EP_HOST=""
+  SYS_WG_EP_PORT=""
+  SYS_WG_KEEP="25"
+  SYS_WG_JC="0"
+  SYS_WG_JMIN="0"
+  SYS_WG_JMAX="0"
+  SYS_WG_S1="0"
+  SYS_WG_S2="0"
+  SYS_WG_S3="0"
+  SYS_WG_S4="0"
+  SYS_WG_H1="1"
+  SYS_WG_H2="2"
+  SYS_WG_H3="3"
+  SYS_WG_H4="4"
+  SYS_WG_I1=""
+
+  [ -f "$conf" ] || return 1
+  while IFS= read -r line || [ -n "$line" ]; do
+    line=$(printf '%s' "$line" | tr -d '\r')
+    case "$line" in
+      ''|\#*) continue ;;
+    esac
+    key=$(printf '%s' "$line" | sed 's/[[:space:]]*=.*//;s/^[[:space:]]*//;s/[[:space:]]*$//')
+    val=$(printf '%s' "$line" | sed 's/^[^=]*=[[:space:]]*//;s/[[:space:]]*$//')
+    case "$key" in
+      PrivateKey|privatekey) SYS_WG_PRIV="$val" ;;
+      PublicKey|publickey) SYS_WG_PUB="$val" ;;
+      Address|address)
+        SYS_WG_ADDR=$(printf '%s' "$val" | cut -d',' -f1 | cut -d'/' -f1 | tr -d ' ')
+        ;;
+      DNS|dns) SYS_WG_DNS="$val" ;;
+      MTU|mtu) SYS_WG_MTU="$val" ;;
+      Endpoint|endpoint)
+        SYS_WG_EP_HOST=$(printf '%s' "$val" | sed 's/:.*//')
+        SYS_WG_EP_PORT=$(printf '%s' "$val" | sed 's/.*://')
+        ;;
+      PersistentKeepalive|persistentkeepalive) SYS_WG_KEEP="$val" ;;
+      Jc|jc) SYS_WG_JC="$val" ;;
+      Jmin|jmin) SYS_WG_JMIN="$val" ;;
+      Jmax|jmax) SYS_WG_JMAX="$val" ;;
+      S1|s1) SYS_WG_S1="$val" ;;
+      S2|s2) SYS_WG_S2="$val" ;;
+      S3|s3) SYS_WG_S3="$val" ;;
+      S4|s4) SYS_WG_S4="$val" ;;
+      H1|h1) SYS_WG_H1="$val" ;;
+      H2|h2) SYS_WG_H2="$val" ;;
+      H3|h3) SYS_WG_H3="$val" ;;
+      H4|h4) SYS_WG_H4="$val" ;;
+      I1|i1) SYS_WG_I1="$val" ;;
+    esac
+  done < "$conf"
+
+  [ -n "$SYS_WG_PRIV" ] && [ -n "$SYS_WG_PUB" ] && [ -n "$SYS_WG_EP_HOST" ] && [ -n "$SYS_WG_EP_PORT" ]
+}
+
+# Применить conf на системный интерфейс ifname (создать/обновить)
+# $1=ifname $2=conf $3=description
+sys_wg_apply() {
+  ifname="$1"
+  conf="$2"
+  desc="${3:-WARP}"
+
+  if ! command -v ndmc >/dev/null 2>&1; then
+    error "ndmc не найден — системный WireGuard недоступен."
+    return 1
+  fi
+  if ! sys_wg_parse_conf "$conf"; then
+    error "Не удалось разобрать conf (нужны PrivateKey, PublicKey, Endpoint)."
+    return 1
+  fi
+
+  [ -n "$SYS_WG_ADDR" ] || SYS_WG_ADDR="172.16.0.2"
+  [ -n "$SYS_WG_MTU" ] || SYS_WG_MTU="1280"
+  [ -n "$SYS_WG_KEEP" ] || SYS_WG_KEEP="25"
+
+  info "Системный туннель: $ifname"
+  info "  Endpoint ${SYS_WG_EP_HOST}:${SYS_WG_EP_PORT}"
+  info "  Address  ${SYS_WG_ADDR}/32  MTU ${SYS_WG_MTU}"
+  info "  ASC jc=${SYS_WG_JC} jmin=${SYS_WG_JMIN} jmax=${SYS_WG_JMAX}"
+
+  # Создать/открыть интерфейс
+  ndmc_cli "interface $ifname" >/dev/null 2>&1 || true
+  ndmc_cli "interface $ifname description $desc" >/dev/null 2>&1 || true
+
+  # Ключ интерфейса
+  if ! ndmc_cli "interface $ifname wireguard security-key $SYS_WG_PRIV" >/dev/null 2>&1; then
+    error "ndmc: не удалось задать security-key (компонент WireGuard установлен?)."
+    return 1
+  fi
+
+  # Адрес / MTU
+  ndmc_cli "interface $ifname ip address $SYS_WG_ADDR 255.255.255.255" >/dev/null 2>&1 || \
+    ndmc_cli "interface $ifname ip address $SYS_WG_ADDR/32" >/dev/null 2>&1 || \
+    warn "Не удалось задать ip address (проверьте вручную)."
+  ndmc_cli "interface $ifname ip mtu $SYS_WG_MTU" >/dev/null 2>&1 || true
+
+  # Peer: снести старых сложно; задаём нужного
+  ndmc_cli "interface $ifname wireguard peer $SYS_WG_PUB" >/dev/null 2>&1 || true
+  if ! ndmc_cli "interface $ifname wireguard peer $SYS_WG_PUB endpoint $SYS_WG_EP_HOST $SYS_WG_EP_PORT" >/dev/null 2>&1; then
+    error "ndmc: peer endpoint не принят."
+    return 1
+  fi
+  ndmc_cli "interface $ifname wireguard peer $SYS_WG_PUB allow-ips 0.0.0.0/0" >/dev/null 2>&1 || \
+    ndmc_cli "interface $ifname wireguard peer $SYS_WG_PUB allow-ips 0.0.0.0 0.0.0.0" >/dev/null 2>&1 || \
+    warn "allow-ips 0.0.0.0/0 не принят — задайте в веб-UI."
+  ndmc_cli "interface $ifname wireguard peer $SYS_WG_PUB keepalive $SYS_WG_KEEP" >/dev/null 2>&1 || true
+
+  # ASC (Amnezia) — базовый набор; I1 часто ломает CLI из‑за <> и пробелов
+  if ! ndmc_cli "interface $ifname wireguard asc $SYS_WG_JC $SYS_WG_JMIN $SYS_WG_JMAX $SYS_WG_S1 $SYS_WG_S2 $SYS_WG_H1 $SYS_WG_H2 $SYS_WG_H3 $SYS_WG_H4" >/dev/null 2>&1; then
+    warn "ASC (jc/jmin/…) не принят — нужна прошивка с AmneziaWG / задайте вручную."
+  else
+    info "ASC задан (без I1 — в CLI часто не проходит)."
+    if [ -n "$SYS_WG_I1" ]; then
+      warn "I1 в conf есть (${#SYS_WG_I1} симв.) — для system обычно задают через импорт .conf в веб-UI,"
+      warn "  либо прошивку с расширенным ASC. При проблемах с DPI: п.4 junk → AWG-M NativeWG."
+    fi
+  fi
+
+  # Поднять
+  ndmc_cli "interface $ifname up" >/dev/null 2>&1 || warn "interface up — проверьте статус."
+  # «Для выхода в интернет» — по возможности
+  ndmc_cli "interface $ifname ip global" >/dev/null 2>&1 || true
+
+  if ndmc_cli "system configuration save" >/dev/null 2>&1; then
+    info "Конфигурация сохранена (system configuration save)."
+  else
+    warn "system configuration save не удался — сохраните вручную."
+  fi
+
+  info "Готово: $ifname ← $desc"
+  info "Проверьте: веб → Другие подключения → WireGuard → $ifname"
+  info "или: п.6 Проверка туннеля (если интерфейс виден в системе)."
+  return 0
+}
+
+do_apply_system_wg() {
+  echo
+  info "Применить conf → системный WireGuard (NDMS)"
+  if ! has_conf; then
+    error "Нет конфига: $CONF_OUT (сначала п.3)."
+    return 1
+  fi
+  if ! command -v ndmc >/dev/null 2>&1; then
+    error "ndmc не найден."
+    return 1
+  fi
+
+  mkdir -p "$TMPDIR" 2>/dev/null || true
+
+  # endpoint из list (как для awg-manager)
+  if ! awg_pick_endpoint; then
+    return 1
+  fi
+  conf_use="$TMPDIR/warpscout-syswg.conf"
+  if ! awg_patch_conf_endpoint "$CONF_OUT" "$conf_use" "$SELECTED_EP"; then
+    error "Не удалось подставить Endpoint."
+    return 1
+  fi
+  # синхронизируем основной conf
+  cp -f "$conf_use" "$CONF_OUT" 2>/dev/null || true
+  info "В conf: Endpoint = $SELECTED_EP"
+
+  listf="$TMPDIR/sys-wg-list.txt"
+  sys_wg_list "$listf" || : > "$listf"
+
+  echo
+  printf '%s\n' "${BOLD}Системные WireGuard:${NC}"
+  i=0
+  if [ -s "$listf" ]; then
+    while IFS='|' read -r name desc addr state || [ -n "$name" ]; do
+      [ -n "$name" ] || continue
+      i=$((i + 1))
+      printf '  %s%d)%s  %s' "$BOLD" "$i" "$NC" "$name"
+      [ -n "$desc" ] && [ "$desc" != "$name" ] && printf ' · %s' "$desc"
+      [ -n "$addr" ] && printf ' · %s' "$addr"
+      printf '  %s[%s]%s\n' "$DIM" "${state:-?}" "$NC"
+    done < "$listf"
+  else
+    printf '  %s(нет существующих Wireguard*)%s\n' "$DIM" "$NC"
+  fi
+  new_idx=$((i + 1))
+  printf '  %s%d)%s  Создать новый WireguardN\n' "$BOLD" "$new_idx" "$NC"
+  echo "  0) Отмена"
+  echo
+  printf '  %sВыбор:%s ' "$BOLD" "$NC"
+  sel=$(read_choice)
+  echo
+
+  case "$sel" in
+    0|"") info "Отменено."; return 0 ;;
+    *[!0-9]*) warn "Неверный выбор."; return 1 ;;
+  esac
+
+  ifname=""
+  desc="WARP-${SELECTED_NODE:-AWG}"
+  if [ "$sel" = "$new_idx" ]; then
+    ifname=$(sys_wg_next_name "$listf") || ifname=""
+    if [ -z "$ifname" ]; then
+      error "Нет свободного Wireguard0…15."
+      return 1
+    fi
+    printf '%s' "${YELLOW}[?]${NC} Имя (description) [${desc}]: "
+    d=$(read_choice)
+    echo
+    [ -n "$d" ] && desc="$d"
+    info "Создаём $ifname ($desc)..."
+  else
+    if [ "$sel" -lt 1 ] || [ "$sel" -gt "$i" ]; then
+      warn "Неверный номер."
+      return 1
+    fi
+    ifname=$(sed -n "${sel}p" "$listf" | cut -d'|' -f1)
+    old_desc=$(sed -n "${sel}p" "$listf" | cut -d'|' -f2)
+    printf '%s' "${YELLOW}[?]${NC} Заменить conf на «${ifname}» (${old_desc})? [Y/n]: "
+    ans=$(read_choice)
+    echo
+    case "$ans" in n|N|no|NO|нет|Нет) info "Отменено."; return 0 ;; esac
+    desc="${old_desc:-$desc}"
+  fi
+
+  # конфликт адреса: если Address из conf занят другим Wireguard — предложить .3+.4…
+  conf_ip=$(grep -iE '^[[:space:]]*Address[[:space:]]*=' "$conf_use" 2>/dev/null | head -1 | sed 's/^[^=]*=[[:space:]]*//;s/\/.*//;s/,.*//;s/[[:space:]]//g')
+  if [ -n "$conf_ip" ] && [ -s "$listf" ]; then
+    busy=0
+    while IFS='|' read -r n d a s || [ -n "$n" ]; do
+      [ "$n" = "$ifname" ] && continue
+      [ "$a" = "$conf_ip" ] && busy=1 && break
+    done < "$listf"
+    if [ "$busy" = "1" ]; then
+      n=3
+      while [ "$n" -le 254 ]; do
+        cand="172.16.0.$n"
+        hit=0
+        while IFS='|' read -r n2 d2 a2 s2 || [ -n "$n2" ]; do
+          [ "$a2" = "$cand" ] && hit=1 && break
+        done < "$listf"
+        if [ "$hit" = "0" ]; then
+          info "Адрес $conf_ip занят → $cand"
+          # правка conf_use Address
+          tmpa="$conf_use.addr"
+          awk -v ip="$cand" '
+            tolower($0) ~ /^[[:space:]]*address[[:space:]]*=/ { print "Address = " ip "/32"; next }
+            { print }
+          ' "$conf_use" > "$tmpa" && mv -f "$tmpa" "$conf_use"
+          break
+        fi
+        n=$((n + 1))
+      done
+    fi
+  fi
+
+  sys_wg_apply "$ifname" "$conf_use" "$desc"
+}
+
+
+# Точка входа п.5: выбор куда применить
+do_apply_conf() {
+  echo
+  info "Применить conf"
+  if ! has_conf; then
+    error "Нет конфига: $CONF_OUT"
+    error "Сначала выполните пункт 3 (сканирование)."
+    return 1
+  fi
+
+  echo
+  printf '%s\n' "${BOLD}Куда применить:${NC}"
+  if is_awg_manager_installed; then
+    echo "  1) awg-manager"
+  else
+    printf '  %s1) awg-manager%s  %s(не установлен)%s\n' "$DIM" "$NC" "$DIM" "$NC"
+  fi
+  if command -v ndmc >/dev/null 2>&1; then
+    echo "  2) Системный WireGuard (Keenetic NDMS)"
+  else
+    printf '  %s2) Системный WireGuard%s  %s(нет ndmc)%s\n' "$DIM" "$NC" "$DIM" "$NC"
+  fi
+  echo "  0) Отмена"
+  echo
+  # default: awg-manager если есть, иначе system
+  if is_awg_manager_installed; then
+    _def=1
+  elif command -v ndmc >/dev/null 2>&1; then
+    _def=2
+  else
+    _def=0
+  fi
+  printf '  %sВыбор [%s]:%s ' "$BOLD" "$_def" "$NC"
+  sel=$(read_choice)
+  echo
+  [ -n "$sel" ] || sel="$_def"
+  case "$sel" in
+    0) info "Отменено."; return 0 ;;
+    1)
+      if ! is_awg_manager_installed; then
+        error "awg-manager не установлен."
+        return 1
+      fi
+      do_apply_awg
+      ;;
+    2)
+      if ! command -v ndmc >/dev/null 2>&1; then
+        error "ndmc не найден."
+        return 1
+      fi
+      do_apply_system_wg
+      ;;
+    *)
+      warn "Неверный выбор."
+      return 1
+      ;;
+  esac
 }
 
 do_apply_awg() {
@@ -2831,11 +3225,11 @@ main_menu() {
     echo "  2) Создать аккаунт"
     echo "  3) Поиск endpoint          ${DIM}scan → list + conf${NC}"
     echo "  4) Подбор маскировки       ${DIM}junk (Jc/Jmin/I1)${NC}"
-    if is_awg_manager_installed; then
-      echo "  5) Применить conf          ${DIM}в awg-manager${NC}"
+    if has_conf; then
+      echo "  5) Применить conf          ${DIM}awg-manager / system WG${NC}"
     else
-      printf '  %s5) Применить conf          в awg-manager%s\n' "$DIM" "$NC"
-      printf '     %sнужен пакет awg-manager%s\n' "$DIM" "$NC"
+      printf '  %s5) Применить conf%s\n' "$DIM" "$NC"
+      printf '     %sнет conf — сначала скан%s\n' "$DIM" "$NC"
     fi
     echo "  6) Проверка туннеля"
     if has_conf; then
@@ -2858,12 +3252,7 @@ main_menu() {
       3) do_scan; pause ;;
       4) do_find_junk; pause ;;
       5)
-        if is_awg_manager_installed; then
-          do_apply_awg; pause
-        else
-          error "awg-manager не установлен."
-          pause
-        fi
+        do_apply_conf; pause
         ;;
       6) do_check_tunnel; pause ;;
       7) do_show_conf; pause ;;
