@@ -30,4 +30,4 @@
 --lua-desync=fake:blob=legacy_zero64:repeats=5
 --payload=unknown
 --lua-desync=fake:blob=quic_initial_4pda_to:repeats=5:payload=~empty
---lua-desync=fake:blob=ACTIVE_GAME_UDP:repeats=5:payload=~empty
+--lua-desync=fake:blob=quic_initial_4pda_to:repeats=5:payload=~empty

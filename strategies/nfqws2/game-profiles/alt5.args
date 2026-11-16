@@ -24,4 +24,4 @@
 --payload=dht
 --lua-desync=fake:blob=legacy_zero64:repeats=14
 --payload=unknown
---lua-desync=fake:blob=ACTIVE_GAME_UDP:repeats=14:payload=~empty
+--lua-desync=fake:blob=quic_initial_4pda_to:repeats=14:payload=~empty
