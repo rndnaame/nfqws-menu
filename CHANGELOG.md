@@ -9,6 +9,7 @@
 
 ### 0.11.10
 
+- **strategies** — во всех `*.conf` (nfqws1/nfqws2): `NFQWS_EXTRA_ARGS="$MODE_LIST"` (вместо MODE_ALL/MODE_AUTO)
 - **lists** — `user-extra.list` в репозитории; при сбое скачивания / отсутствии list из conf создаётся пустой файл (`ensure_conf_list_files`), чтобы nfqws2 не падал на hostlist
 - **update_lists** — auto/user-extra/exclude-extra/ipset_exclude-extra: touch + опциональная загрузка непустого из репо
 
