@@ -19,7 +19,7 @@
 #   sh installer_warpscout.sh
 #   curl -fsSL https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/installer_warpscout.sh | sh
 
-SCRIPT_VERSION="0.2.9"
+SCRIPT_VERSION="0.3.2"
 
 # ANSI (portable для ash/BusyBox)
 RED=$(printf '\033[0;31m')
@@ -747,7 +747,6 @@ EOF
 }
 
 
-
 # Прописать Jc/Jmin/Jmax/I1 в conf (секция [Interface])
 patch_conf_junk() {
   conf="$1"
@@ -804,107 +803,11 @@ patch_conf_junk() {
 }
 
 # Replace conf в выбранный туннель awg-manager (без смены endpoint/имени)
-awg_replace_conf_file() {
-  conf="$1"
-  [ -f "$conf" ] || { error "Нет conf: $conf"; return 1; }
-  if ! is_awg_manager_installed; then
-    error "awg-manager не установлен."
-    return 1
-  fi
-  if ! command -v curl >/dev/null 2>&1; then
-    error "Нужен curl."
-    return 1
-  fi
-  base=$(awg_api_base)
-  if ! awg_load_api_key; then
-    error "API-ключ не задан."
-    return 1
-  fi
-  key="$AWG_KEY"
-  listf="$TMPDIR/awg-tunnels-junk.txt"
-  mkdir -p "$TMPDIR" 2>/dev/null || true
-  info "Запрос списка туннелей..."
-  if ! awg_list_tunnels "$base" "$key" "$listf"; then
-    error "Нет туннелей."
-    return 1
-  fi
 
-  echo
-  printf '%s\n' "${BOLD}Туннель для apply junk:${NC}"
-  i=0
-  while IFS='|' read -r tid tname tstat tend taddr tifc tndms || [ -n "$tid" ]; do
-    [ -n "$tid" ] || continue
-    i=$((i + 1))
-    print_tunnel_menu_line "$i" "$tid" "${tstat:-?}" "$tname" "$taddr" "$tend" "true"
-  done < "$listf"
-  echo "  0) Отмена"
-  echo
-  printf '  %sВыбор:%s ' "$BOLD" "$NC"
-  sel=$(read_choice)
-  echo
-  case "$sel" in
-    0|"") info "Отменено."; return 0 ;;
-    *[!0-9]*) warn "Неверный выбор."; return 1 ;;
-  esac
-  if [ "$sel" -lt 1 ] || [ "$sel" -gt "$i" ]; then
-    warn "Неверный номер."; return 1
-  fi
-  tid=$(sed -n "${sel}p" "$listf" | cut -d'|' -f1)
-  tname=$(sed -n "${sel}p" "$listf" | cut -d'|' -f2)
-  tend=$(sed -n "${sel}p" "$listf" | cut -d'|' -f4)
-  [ -n "$tid" ] || { error "Пустой id."; return 1; }
-
-  # Только junk (Jc/Jmin/Jmax/I1): сервер/endpoint туннеля не трогаем
-  if [ -n "$tend" ]; then
-    info "Endpoint туннеля оставляем: $tend"
-    tmp_ep="$TMPDIR/junk-ep.conf"
-    if awg_patch_conf_endpoint "$conf" "$tmp_ep" "$tend"; then
-      mv -f "$tmp_ep" "$conf" 2>/dev/null || cp -f "$tmp_ep" "$conf"
-    else
-      warn "Не удалось зафиксировать Endpoint в conf — продолжаем."
-    fi
-  else
-    warn "Endpoint туннеля неизвестен — в conf может уйти Endpoint из scan."
-  fi
-
-  # Address: текущий у туннеля, смена только при конфликте с другими
-  if ! awg_ensure_free_address "$conf" "$listf" "$tid"; then
-    return 1
-  fi
-
-  info "Остановка $tid..."
-  awg_control stop "$tid" "$key" "$base" || true
-
-  bodyf="$TMPDIR/awg-junk-replace.json"
-  {
-    printf '{"content":"'
-    tr -d '\r' < "$conf" | sed 's/\\/\\\\/g;s/"/\\"/g;s/\t/\\t/g' | awk '{printf "%s\\n",$0}'
-    printf '"}'
-  } > "$bodyf"
-
-  info "POST ${base}/tunnels/replace?id=${tid}  (junk → «${tname}»)"
-  resp=$(curl -sS --connect-timeout 5 --max-time 30 \
-    -X POST "${base}/tunnels/replace?id=${tid}" \
-    -H "Authorization: Bearer ${key}" \
-    -H "Content-Type: application/json" \
-    -d @"$bodyf" 2>/dev/null) || resp=""
-  if ! awg_api_ok "$resp"; then
-    error "replace не удался."
-    [ -n "$resp" ] && printf '%s\n' "$resp"
-    return 1
-  fi
-  info "Конфиг туннеля $tid обновлён (junk)."
-  sleep 1
-  info "Запуск $tid..."
-  if ! awg_control start "$tid" "$key" "$base"; then
-    awg_control restart "$tid" "$key" "$base" || true
-  fi
-  return 0
-}
-
-# Применить junk (Jc/Jmin/Jmax/I1) к системному WireguardN через ASC CLI
-# Не трогает PrivateKey / Endpoint / Address
-sys_wg_apply_junk() {
+# ASC junk на конкретный WireguardN (системный, не awg-manager)
+sys_wg_apply_junk_to() {
+  ifname="$1"
+  desc="${2:-$ifname}"
   if ! command -v ndmc >/dev/null 2>&1; then
     error "ndmc не найден."
     return 1
@@ -915,66 +818,6 @@ sys_wg_apply_junk() {
   [ -n "$JMAX" ] || JMAX=0
   s1=0; s2=0; s3=0; s4=0
   h1=1; h2=2; h3=3; h4=4
-
-  mkdir -p "$TMPDIR" 2>/dev/null || true
-  rci_cache_invalidate
-  managedf="$TMPDIR/awg-ndms-junk.txt"
-  : > "$managedf"
-  awg_managed_ndms_file "$managedf" 2>/dev/null || true
-
-  listf="$TMPDIR/sys-wg-junk-list.txt"
-  sys_wg_list "$listf" "$managedf" || : > "$listf"
-  if [ ! -s "$listf" ]; then
-    error "Нет системных Wireguard*."
-    return 1
-  fi
-
-  echo
-  printf '%s\n' "${BOLD}Системный туннель для junk:${NC}"
-  i=0
-  while IFS='|' read -r name desc addr state || [ -n "$name" ]; do
-    [ -n "$name" ] || continue
-    i=$((i + 1))
-    _label=$(sys_wg_awg_label "$name" "$managedf" 2>/dev/null) || _label=""
-    [ -z "$_label" ] && [ -n "$desc" ] && [ "$desc" != "$name" ] && _label="$desc"
-    printf '  %s%d)%s  %s' "$BOLD" "$i" "$NC" "$name"
-    [ -n "$_label" ] && printf ' · %s' "$_label"
-    [ -n "$addr" ] && printf ' · %s' "$addr"
-    printf '  %s[%s]%s' "$DIM" "${state:-?}" "$NC"
-    if sys_wg_is_awg_managed "$name" "$addr" "$managedf" "$desc"; then
-      printf '  %s[awg-manager]%s' "$CYAN" "$NC"
-    fi
-    printf '\n'
-  done < "$listf"
-  if [ -s "$managedf" ]; then
-    printf '  %s[awg-manager] — junk лучше через API awg-manager%s\n' "$DIM" "$NC"
-  fi
-  echo "  0) Отмена"
-  echo
-  printf '  %sВыбор:%s ' "$BOLD" "$NC"
-  sel=$(read_choice)
-  echo
-  case "$sel" in
-    0|"") info "Отменено."; return 0 ;;
-    *[!0-9]*) warn "Неверный выбор."; return 1 ;;
-  esac
-  if [ "$sel" -lt 1 ] || [ "$sel" -gt "$i" ]; then
-    warn "Неверный номер."
-    return 1
-  fi
-  ifname=$(sed -n "${sel}p" "$listf" | cut -d'|' -f1)
-  desc=$(sed -n "${sel}p" "$listf" | cut -d'|' -f2)
-  addr=$(sed -n "${sel}p" "$listf" | cut -d'|' -f3)
-  if sys_wg_is_awg_managed "$ifname" "$addr" "$managedf" "$desc"; then
-    warn "$ifname управляется awg-manager — ASC через NDMS может конфликтовать."
-    printf '%s' "${YELLOW}[?]${NC} Всё равно применить junk к системному интерфейсу? [y/N]: "
-    ans=$(read_choice)
-    echo
-    case "$ans" in
-      y|Y|yes|YES|да|Да) ;;
-      *) info "Отменено. Используйте junk через awg-manager."; return 0 ;;
-    esac
-  fi
 
   info "Остановка $ifname (перед ASC)..."
   ndmc_cli "interface $ifname down" >/dev/null 2>&1 || true
@@ -1001,13 +844,92 @@ sys_wg_apply_junk() {
 
   ndmc_cli "interface $ifname up" >/dev/null 2>&1 || warn "interface up — проверьте статус."
   ndmc_cli "system configuration save" >/dev/null 2>&1 || true
-  info "Junk применён к системному $ifname. Проверка: п.6"
+  info "Junk → системный $ifname. Проверка: п.6"
   return 0
 }
 
-# Применить сохранённый junk к conf и/или туннелю
-do_apply_junk() {
+# Junk через API: conf с Jc/…, endpoint туннеля сохраняем
+awg_apply_junk_for_ndms() {
+  _ndms="$1"
+  _ndesc="$2"
+  _conf="$3"
 
+  if ! is_awg_manager_installed; then
+    error "awg-manager не установлен."
+    return 1
+  fi
+  if ! command -v curl >/dev/null 2>&1; then
+    error "Нужен curl."
+    return 1
+  fi
+  if ! awg_load_api_key; then
+    error "API-ключ не задан."
+    return 1
+  fi
+  _base=$(awg_api_base)
+  _key="$AWG_KEY"
+  _listf="$TMPDIR/awg-tunnels-junk2.txt"
+  if ! awg_list_tunnels "$_base" "$_key" "$_listf" >/dev/null 2>&1 || [ ! -s "$_listf" ]; then
+    error "Список туннелей awg-manager недоступен."
+    return 1
+  fi
+
+  _tid=""; _tname=""; _tend=""
+  while IFS='|' read -r tid tname tstat tend taddr tifc tndms || [ -n "$tid" ]; do
+    [ -n "$tid" ] || continue
+    if [ -n "$_ndms" ] && [ "$tndms" = "$_ndms" ]; then
+      _tid="$tid"; _tname="$tname"; _tend="$tend"; break
+    fi
+    if [ -n "$_ndesc" ] && [ "$tname" = "$_ndesc" ]; then
+      _tid="$tid"; _tname="$tname"; _tend="$tend"; break
+    fi
+  done < "$_listf"
+  if [ -z "$_tid" ]; then
+    error "Туннель awg-manager для $_ndms не найден."
+    return 1
+  fi
+
+  info "Туннель: $_tid · ${_tname:-?}  [awg-manager]"
+  # endpoint туннеля не меняем
+  _work="$TMPDIR/junk-awg-apply.conf"
+  cp -f "$_conf" "$_work" 2>/dev/null || return 1
+  if [ -n "$_tend" ]; then
+    info "Endpoint оставляем: $_tend"
+    awg_patch_conf_endpoint "$_work" "$_work.ep" "$_tend" 2>/dev/null && mv -f "$_work.ep" "$_work"
+  fi
+  if ! awg_ensure_free_address "$_work" "$_listf" "$_tid"; then
+    return 1
+  fi
+
+  info "Остановка $_tid..."
+  awg_control stop "$_tid" "$_key" "$_base" || true
+  _bodyf="$TMPDIR/awg-junk-ndms.json"
+  {
+    printf '{"content":"'
+    tr -d '\r' < "$_work" | sed 's/\\/\\\\/g;s/"/\\"/g;s/\t/\\t/g' | awk '{printf "%s\\n",$0}'
+    printf '"}'
+  } > "$_bodyf"
+  info "POST ${_base}/tunnels/replace?id=${_tid}  (junk)"
+  _resp=$(curl -sS --connect-timeout 5 --max-time 30 \
+    -X POST "${_base}/tunnels/replace?id=${_tid}" \
+    -H "Authorization: Bearer ${_key}" \
+    -H "Content-Type: application/json" \
+    -d @"$_bodyf" 2>/dev/null) || _resp=""
+  if ! awg_api_ok "$_resp"; then
+    error "replace не удался."
+    [ -n "$_resp" ] && printf '%s\n' "$_resp"
+    return 1
+  fi
+  info "Junk → $_tid (API)."
+  sleep 1
+  if ! awg_control start "$_tid" "$_key" "$_base"; then
+    awg_control restart "$_tid" "$_key" "$_base" || true
+  fi
+  return 0
+}
+
+# Применить сохранённый junk: conf и/или туннель (единый список)
+do_apply_junk() {
   echo
   info "Применение junk-параметров"
   if ! load_junk_params; then
@@ -1020,16 +942,7 @@ do_apply_junk() {
   echo
   printf '%s\n' "${BOLD}Куда применить:${NC}"
   echo "  1) Только conf ($CONF_OUT)"
-  if is_awg_manager_installed; then
-    echo "  2) conf + replace в туннель awg-manager"
-  else
-    printf '  %s2) conf + replace в awg-manager%s  %s(не установлен)%s\n' "$DIM" "$NC" "$DIM" "$NC"
-  fi
-  if command -v ndmc >/dev/null 2>&1; then
-    echo "  3) conf + системный WireGuard (ASC CLI)"
-  else
-    printf '  %s3) conf + системный WireGuard%s  %s(нет ndmc)%s\n' "$DIM" "$NC" "$DIM" "$NC"
-  fi
+  echo "  2) Заменить параметры туннеля"
   echo "  0) Отмена"
   echo
   printf '  %sВыбор:%s ' "$BOLD" "$NC"
@@ -1045,32 +958,37 @@ do_apply_junk() {
       patch_conf_junk "$CONF_OUT" || return 1
       return 0
       ;;
-    2)
-      if ! is_awg_manager_installed; then
-        error "awg-manager не установлен."
-        return 1
-      fi
-      if ! has_conf; then
-        error "Нет conf: $CONF_OUT (сначала п.3 scan)."
-        return 1
-      fi
-      patch_conf_junk "$CONF_OUT" || return 1
-      awg_replace_conf_file "$CONF_OUT" || return 1
-      return 0
-      ;;
-    3)
-      if ! command -v ndmc >/dev/null 2>&1; then
-        error "ndmc не найден."
-        return 1
-      fi
-      if has_conf; then
-        patch_conf_junk "$CONF_OUT" || true
-      fi
-      sys_wg_apply_junk || return 1
-      return 0
-      ;;
+    2) ;;
     *) warn "Неверный выбор."; return 1 ;;
   esac
+
+  # --- 2) единый список WireGuard ---
+  if ! has_conf; then
+    error "Нет conf: $CONF_OUT (сначала п.3 scan)."
+    return 1
+  fi
+  patch_conf_junk "$CONF_OUT" || return 1
+  conf_use="$CONF_OUT"
+
+  managedf="$TMPDIR/awg-ndms-junk.txt"
+  listf="$TMPDIR/sys-wg-junk-list.txt"
+  if ! sys_wg_refresh_lists "$listf" "$managedf"; then
+    error "Нет Wireguard*-интерфейсов."
+    return 1
+  fi
+  if ! pick_sys_wg_menu "Туннель для junk:" "$listf" "$managedf"; then
+    return 0
+  fi
+  [ "$PICK_KIND" = "iface" ] || return 1
+
+  if [ "$PICK_MANAGED" = "1" ]; then
+    info "$PICK_WG → awg-manager API"
+    awg_apply_junk_for_ndms "$PICK_WG" "$PICK_DESC" "$conf_use"
+    return $?
+  fi
+  info "$PICK_WG → системный (ASC / NDMS)"
+  sys_wg_apply_junk_to "$PICK_WG" "$PICK_DESC"
+  return $?
 }
 
 
@@ -2596,6 +2514,96 @@ sys_wg_list() {
   [ -s "$_swg_out" ]
 }
 
+# RCI + awg markers → listf (name|desc|addr|state|ep|global) и managedf
+sys_wg_refresh_lists() {
+  _r_list="$1"
+  _r_mf="$2"
+  mkdir -p "$TMPDIR" 2>/dev/null || true
+  rci_cache_invalidate
+  : > "$_r_mf"
+  awg_managed_ndms_file "$_r_mf" 2>/dev/null || true
+  sys_wg_list "$_r_list" "$_r_mf" || : > "$_r_list"
+  [ -s "$_r_list" ]
+}
+
+# Меню выбора Wireguard* из listf.
+# pick_sys_wg_menu "Заголовок" listf managedf [доп.пункт ...]
+#  return 0 — выбран интерфейс или доп.пункт
+#  return 1 — отмена / ошибка
+#  PICK_KIND=iface|extra|cancel
+#  PICK_WG PICK_DESC PICK_ADDR PICK_EP PICK_GLOB PICK_MANAGED(0|1)
+#  PICK_EXTRA=1..N при доп.пункте; PICK_COUNT=число iface в списке
+pick_sys_wg_menu() {
+  _pm_title="$1"
+  _pm_list="$2"
+  _pm_mf="$3"
+  shift 3
+  PICK_KIND="cancel"
+  PICK_WG=""; PICK_DESC=""; PICK_ADDR=""; PICK_EP=""; PICK_GLOB="true"
+  PICK_MANAGED=0; PICK_EXTRA=0; PICK_COUNT=0
+
+  echo
+  printf '%s\n' "${BOLD}${_pm_title}${NC}"
+  _pm_i=0
+  _pm_sep=0
+  if [ -s "$_pm_list" ]; then
+    while IFS='|' read -r _pn _pd _pa _ps _pe _pg || [ -n "$_pn" ]; do
+      [ -n "$_pn" ] || continue
+      if [ "$_pg" = "false" ] && [ "$_pm_sep" = "0" ]; then
+        print_local_sep
+        _pm_sep=1
+      fi
+      _pm_i=$((_pm_i + 1))
+      _plab=$(sys_wg_awg_label "$_pn" "$_pm_mf" 2>/dev/null) || _plab=""
+      [ -z "$_plab" ] && [ -n "$_pd" ] && [ "$_pd" != "$_pn" ] && _plab="$_pd"
+      _ptag=""
+      sys_wg_is_awg_managed "$_pn" "$_pa" "$_pm_mf" "$_pd" && _ptag="awg-manager"
+      print_tunnel_menu_line "$_pm_i" "$_pn" "${_ps:-?}" "$_plab" "$_pa" "$_pe" "${_pg:-true}" "$_ptag"
+    done < "$_pm_list"
+  else
+    printf '  %s(нет существующих Wireguard*)%s\n' "$DIM" "$NC"
+  fi
+  PICK_COUNT=$_pm_i
+
+  _pm_ei=0
+  for _pm_extra in "$@"; do
+    [ -n "$_pm_extra" ] || continue
+    _pm_ei=$((_pm_ei + 1))
+    _pm_num=$((PICK_COUNT + _pm_ei))
+    printf '  %s%d)%s  %s\n' "$BOLD" "$_pm_num" "$NC" "$_pm_extra"
+  done
+  _pm_max=$((PICK_COUNT + _pm_ei))
+  echo "  0) Отмена"
+  echo
+  printf '  %sВыбор:%s ' "$BOLD" "$NC"
+  _pm_sel=$(read_choice)
+  echo
+  case "$_pm_sel" in
+    0|"") info "Отменено."; PICK_KIND="cancel"; return 1 ;;
+    *[!0-9]*) warn "Неверный выбор."; return 1 ;;
+  esac
+  if [ "$_pm_sel" -lt 1 ] || [ "$_pm_sel" -gt "$_pm_max" ]; then
+    warn "Неверный номер."
+    return 1
+  fi
+  if [ "$_pm_sel" -gt "$PICK_COUNT" ]; then
+    PICK_KIND="extra"
+    PICK_EXTRA=$((_pm_sel - PICK_COUNT))
+    return 0
+  fi
+  PICK_KIND="iface"
+  PICK_WG=$(sed -n "${_pm_sel}p" "$_pm_list" | cut -d'|' -f1)
+  PICK_DESC=$(sed -n "${_pm_sel}p" "$_pm_list" | cut -d'|' -f2)
+  PICK_ADDR=$(sed -n "${_pm_sel}p" "$_pm_list" | cut -d'|' -f3)
+  PICK_EP=$(sed -n "${_pm_sel}p" "$_pm_list" | cut -d'|' -f5)
+  PICK_GLOB=$(sed -n "${_pm_sel}p" "$_pm_list" | cut -d'|' -f6)
+  PICK_MANAGED=0
+  if sys_wg_is_awg_managed "$PICK_WG" "$PICK_ADDR" "$_pm_mf" "$PICK_DESC"; then
+    PICK_MANAGED=1
+  fi
+  return 0
+}
+
 # Свободное имя WireguardN (0..15)
 sys_wg_next_name() {
   listf="$1"
@@ -2843,65 +2851,27 @@ do_apply_system_wg() {
   cp -f "$conf_use" "$CONF_OUT" 2>/dev/null || true
   info "В conf: Endpoint = $SELECTED_EP"
 
-  # свежий RCI + awg-manager, затем список
-  rci_cache_invalidate
   managedf="$TMPDIR/awg-ndms-sys.txt"
-  : > "$managedf"
-  awg_managed_ndms_file "$managedf" 2>/dev/null || true
-
   listf="$TMPDIR/sys-wg-list.txt"
-  sys_wg_list "$listf" "$managedf" || : > "$listf"
+  sys_wg_refresh_lists "$listf" "$managedf" || true
 
-  echo
-  printf '%s\n' "${BOLD}Системные WireGuard:${NC}"
-  i=0
-  _sep_done=0
-  if [ -s "$listf" ]; then
-    while IFS='|' read -r name desc addr state ep glob || [ -n "$name" ]; do
-      [ -n "$name" ] || continue
-      if [ "$glob" = "false" ] && [ "$_sep_done" = "0" ]; then
-        print_local_sep
-        _sep_done=1
-      fi
-      i=$((i + 1))
-      _label=$(sys_wg_awg_label "$name" "$managedf" 2>/dev/null) || _label=""
-      [ -z "$_label" ] && [ -n "$desc" ] && [ "$desc" != "$name" ] && _label="$desc"
-      _xtag=""
-      sys_wg_is_awg_managed "$name" "$addr" "$managedf" "$desc" && _xtag="awg-manager"
-      print_tunnel_menu_line "$i" "$name" "${state:-?}" "$_label" "$addr" "$ep" "${glob:-true}" "$_xtag"
-    done < "$listf"
-  else
-    printf '  %s(нет существующих Wireguard*)%s\n' "$DIM" "$NC"
-  fi
-  new_idx=$((i + 1))
-  printf '  %s%d)%s  Создать новый WireguardN\n' "$BOLD" "$new_idx" "$NC"
-  awg_idx=0
   if is_awg_manager_installed; then
-    awg_idx=$((new_idx + 1))
-    printf '  %s%d)%s  Импорт нового туннеля через awg-manager\n' "$BOLD" "$awg_idx" "$NC"
-  fi
-  echo "  0) Отмена"
-  echo
-  printf '  %sВыбор:%s ' "$BOLD" "$NC"
-  sel=$(read_choice)
-  echo
-
-  case "$sel" in
-    0|"") info "Отменено."; return 0 ;;
-    *[!0-9]*) warn "Неверный выбор."; return 1 ;;
-  esac
-
-  # импорт через awg-manager (POST /import/conf)
-  if [ "$awg_idx" -gt 0 ] && [ "$sel" = "$awg_idx" ]; then
-    if ! awg_import_new_tunnel "$conf_use"; then
-      return 1
-    fi
-    return 0
+    pick_sys_wg_menu "Системные WireGuard:" "$listf" "$managedf" \
+      "Создать новый WireguardN" \
+      "Импорт нового туннеля через awg-manager" || return 0
+  else
+    pick_sys_wg_menu "Системные WireGuard:" "$listf" "$managedf" \
+      "Создать новый WireguardN" || return 0
   fi
 
   ifname=""
   desc="WARP-${SELECTED_NODE:-AWG}"
-  if [ "$sel" = "$new_idx" ]; then
+  if [ "$PICK_KIND" = "extra" ]; then
+    if is_awg_manager_installed && [ "$PICK_EXTRA" = "2" ]; then
+      awg_import_new_tunnel "$conf_use"
+      return $?
+    fi
+    # extra 1 (или единственный) — создать WireguardN
     ifname=$(sys_wg_next_name "$listf") || ifname=""
     if [ -z "$ifname" ]; then
       error "Нет свободного Wireguard0…15."
@@ -2913,23 +2883,14 @@ do_apply_system_wg() {
     [ -n "$d" ] && desc="$d"
     info "Создаём $ifname ($desc)..."
   else
-    if [ "$sel" -lt 1 ] || [ "$sel" -gt "$i" ]; then
-      warn "Неверный номер."
-      return 1
-    fi
-    ifname=$(sed -n "${sel}p" "$listf" | cut -d'|' -f1)
-    old_desc=$(sed -n "${sel}p" "$listf" | cut -d'|' -f2)
-    old_addr=$(sed -n "${sel}p" "$listf" | cut -d'|' -f3)
-
-    # Интерфейс из awg-manager → сразу через API (не NDMS)
-    if sys_wg_is_awg_managed "$ifname" "$old_addr" "$managedf" "$old_desc"; then
+    ifname="$PICK_WG"
+    old_desc="$PICK_DESC"
+    old_addr="$PICK_ADDR"
+    if [ "$PICK_MANAGED" = "1" ]; then
       info "$ifname → awg-manager API"
-      if ! awg_apply_via_api_for_ndms "$ifname" "$old_desc" "$conf_use"; then
-        return 1
-      fi
-      return 0
+      awg_apply_via_api_for_ndms "$ifname" "$old_desc" "$conf_use"
+      return $?
     fi
-
     printf '%s' "${YELLOW}[?]${NC} Заменить conf на «${ifname}» (${old_desc})? [Y/n]: "
     ans=$(read_choice)
     echo
@@ -2997,159 +2958,6 @@ do_apply_conf() {
     return 1
   fi
   do_apply_system_wg
-}
-
-do_apply_awg() {
-  echo
-  info "Применить conf в awg-manager"
-  if ! is_awg_manager_installed; then
-    error "awg-manager не установлен (opkg / /opt/etc/awg-manager)."
-    return 1
-  fi
-  if ! has_conf; then
-    error "Нет конфига: $CONF_OUT"
-    error "Сначала выполните пункт 3 (сканирование)."
-    return 1
-  fi
-  if ! command -v curl >/dev/null 2>&1; then
-    error "Нужен curl."
-    return 1
-  fi
-
-  mkdir -p "$TMPDIR" 2>/dev/null || true
-
-  # 1) выбор endpoint из list → правка conf
-  if ! awg_pick_endpoint; then
-    return 1
-  fi
-  conf_use="$TMPDIR/warpscout-awg-apply.conf"
-  if ! awg_patch_conf_endpoint "$CONF_OUT" "$conf_use" "$SELECTED_EP"; then
-    error "Не удалось подставить Endpoint = $SELECTED_EP в conf."
-    return 1
-  fi
-  ensure_conf_keenetic_fields "$conf_use" || true
-  ensure_conf_keenetic_fields "$CONF_OUT" || true
-  info "В $CONF_OUT: Endpoint = $SELECTED_EP"
-
-  # 2) API
-  base=$(awg_api_base)
-  info "API: $base"
-
-  if ! awg_load_api_key; then
-    error "API-ключ не задан."
-    return 1
-  fi
-  key="$AWG_KEY"
-
-  listf="$TMPDIR/awg-tunnels.txt"
-  info "Запрос списка туннелей..."
-  if ! awg_list_tunnels "$base" "$key" "$listf"; then
-    warn "Список туннелей пуст или недоступен — можно импортировать новый."
-  fi
-
-  echo
-  printf '%s\n' "${BOLD}Туннели awg-manager:${NC}"
-  i=0
-  if [ -s "$listf" ]; then
-    while IFS='|' read -r tid tname tstat tend taddr tifc tndms || [ -n "$tid" ]; do
-      [ -n "$tid" ] || continue
-      i=$((i + 1))
-      print_tunnel_menu_line "$i" "$tid" "${tstat:-?}" "$tname" "$taddr" "$tend" "true"
-    done < "$listf"
-  fi
-  new_idx=$((i + 1))
-  printf '  %s%d)%s  Импорт нового туннеля (POST /import/conf)\n' "$BOLD" "$new_idx" "$NC"
-  echo "  0) Отмена"
-  echo
-  printf '  %sВыбор туннеля:%s ' "$BOLD" "$NC"
-  sel=$(read_choice)
-  echo
-
-  case "$sel" in
-    0|"") info "Отменено."; return 0 ;;
-  esac
-
-  if [ "$sel" = "$new_idx" ]; then
-    awg_import_new_tunnel "$conf_use"
-    return $?
-  fi
-
-  # выбор по номеру
-  case "$sel" in
-    *[!0-9]*) warn "Неверный выбор."; return 1 ;;
-  esac
-  if [ "$sel" -lt 1 ] || [ "$sel" -gt "$i" ]; then
-    warn "Неверный номер."
-    return 1
-  fi
-
-  tid=$(sed -n "${sel}p" "$listf" | cut -d'|' -f1)
-  tname=$(sed -n "${sel}p" "$listf" | cut -d'|' -f2)
-  if [ -z "$tid" ]; then
-    error "Не удалось определить id туннеля."
-    return 1
-  fi
-
-  # Замена конфига без delete (маршрутизация/привязки туннеля сохраняются).
-  # API: stop (если running) → запись conf → start только если был running.
-  # Поэтому после replace всегда явно start/restart.
-  if ! awg_ensure_free_address "$conf_use" "$listf" "$tid"; then
-    return 1
-  fi
-
-  def_name="WARP-${SELECTED_NODE}"
-  printf '%s' "${YELLOW}[?]${NC} Имя туннеля [${def_name}] (Enter = ${def_name}, «-» = оставить «${tname}», 0 = отмена): "
-  new_name=$(read_choice)
-  echo
-  case "$new_name" in
-    0) info "Отменено."; return 0 ;;
-    -) new_name="" ;;
-    "") new_name="$def_name" ;;
-  esac
-  if [ -n "$new_name" ] && [ "$new_name" != "$tname" ]; then
-    info "Замена: id=$tid  «${tname}» → «${new_name}»  Endpoint ${SELECTED_EP} [${SELECTED_NODE}]"
-  else
-    new_name=""
-    info "Замена: id=$tid  «${tname}»  Endpoint ${SELECTED_EP} [${SELECTED_NODE}]"
-  fi
-
-  info "Остановка $tid (перед replace)..."
-  awg_control stop "$tid" "$key" "$base" || true
-
-  bodyf="$TMPDIR/awg-replace.json"
-  {
-    printf '{"content":"'
-    tr -d '\r' < "$conf_use" | sed 's/\\/\\\\/g;s/"/\\"/g;s/\t/\\t/g' | awk '{printf "%s\\n",$0}'
-    if [ -n "$new_name" ]; then
-      printf '","name":"%s"}' "$new_name"
-    else
-      printf '"}'
-    fi
-  } > "$bodyf"
-
-  info "POST ${base}/tunnels/replace?id=${tid}"
-  resp=$(curl -sS --connect-timeout 5 --max-time 30 \
-    -X POST "${base}/tunnels/replace?id=${tid}" \
-    -H "Authorization: Bearer ${key}" \
-    -H "Content-Type: application/json" \
-    -d @"$bodyf" 2>/dev/null) || resp=""
-  if ! awg_api_ok "$resp"; then
-    error "replace не удался."
-    [ -n "$resp" ] && printf '%s\n' "$resp"
-    return 1
-  fi
-  info "Конфиг туннеля $tid заменён (Endpoint = $SELECTED_EP)."
-  printf '%s\n' "${DIM}$resp${NC}" | head -c 400
-  echo
-
-  # После replace (особенно если туннель был stopped) API может не поднять его.
-  sleep 1
-  info "Запуск $tid..."
-  if ! awg_control start "$tid" "$key" "$base"; then
-    warn "start не удался — restart..."
-    awg_control restart "$tid" "$key" "$base" || true
-  fi
-  return 0
 }
 
 
