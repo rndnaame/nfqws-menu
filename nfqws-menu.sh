@@ -10,7 +10,7 @@
 
 set -e
 
-SCRIPT_VERSION="0.11.10"
+SCRIPT_VERSION="0.11.11"
 
 RAW_BASE="https://raw.githubusercontent.com/rndnaame/nfqws-menu/main"
 STRATEGIES_API="https://api.github.com/repos/rndnaame/nfqws-menu/contents/strategies"
@@ -2032,6 +2032,89 @@ extract_list_paths() {
            -e 's/^\(\/[^[:space:]"]*\.list\)$/\1/p' | sort -u
 }
 
+# Пути --lua-init=@/opt/etc/nfqws2/lua/....lua из конфига
+extract_lua_paths() {
+  grep -vE '^[[:space:]]*#' "$1" 2>/dev/null | tr ' \t' '\n' | \
+    sed -n -e 's/.*@\(\/[^[:space:]"]*\.lua\(\.gz\)\?\).*/\1/p' \
+           -e 's/.*=\(\/[^[:space:]"]*\.lua\(\.gz\)\?\).*/\1/p' | sort -u
+}
+
+# lua считается на месте, если есть .lua или .lua.gz (nfqws2 принимает оба)
+lua_file_present() {
+  local p="$1"
+  [ -f "$p" ] && return 0
+  case "$p" in
+    *.lua.gz)
+      [ -f "${p%.gz}" ] && return 0
+      ;;
+    *.lua)
+      [ -f "${p}.gz" ] && return 0
+      ;;
+  esac
+  return 1
+}
+
+# Проверка lua из --lua-init; отсутствующие качаем из strategies/lua/
+# $1=ver (совместимость) $2=conf  $3=auto (1 — без confirm)
+check_lua() {
+  local conf="$2" auto="${3:-0}"
+  local paths path name missing=0 missing_list="" dest
+
+  if [ ! -f "$conf" ]; then
+    warn "Конфиг $conf не найден — проверка lua пропущена."
+    return 1
+  fi
+
+  paths=$(extract_lua_paths "$conf")
+  if [ -z "$paths" ]; then
+    info "В конфиге нет --lua-init — проверка lua не требуется."
+    return 0
+  fi
+
+  info "lua, указанные в конфиге (.lua или .lua.gz):"
+  for path in $paths; do
+    if lua_file_present "$path"; then
+      if [ -f "$path" ]; then
+        info "  OK  $path"
+      elif [ -f "${path}.gz" ]; then
+        info "  OK  ${path}.gz"
+      else
+        info "  OK  ${path%.gz}"
+      fi
+    else
+      warn "  нет $path / ${path}.gz"
+      missing=1
+      missing_list="$missing_list $path"
+    fi
+  done
+
+  [ "$missing" -eq 0 ] && { info "Все используемые lua на месте."; return 0; }
+
+  warn "Часть lua отсутствует."
+  if [ "$auto" != "1" ]; then
+    confirm_yes "Скачать отсутствующие lua из strategies/lua/?" || return 0
+  else
+    info "Скачивание отсутствующих lua..."
+  fi
+
+  for path in $missing_list; do
+    name=$(basename "$path")
+    # качаем без .gz — в репозитории strategies/lua/*.lua
+    case "$name" in
+      *.lua.gz) name="${name%.gz}" ;;
+    esac
+    dest="$(dirname "$path")/$name"
+    mkdir -p "$(dirname "$dest")"
+    info "Скачивание $name → $dest"
+    if download_file "${RAW_BASE}/strategies/lua/${name}" "$dest"; then
+      info "  готово"
+    else
+      rm -f "$dest"
+      warn "  нет в репозитории / ошибка загрузки — $name"
+    fi
+  done
+}
+
 # Универсальная проверка отсутствующих файлов из конфига
 # $1=label $2=conf $3=extractor_func $4=repo_subdir $5=ask_msg
 # $6=auto — без confirm, сразу скачать отсутствующие
@@ -2423,6 +2506,10 @@ apply_strategy() {
   echo
   info "=== Проверка blobs ==="
   check_blobs "$ver" "$conf_dest"
+
+  echo
+  info "=== Проверка lua ==="
+  check_lua "$ver" "$conf_dest"
 
   echo
   info "=== Lists ==="

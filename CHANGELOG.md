@@ -7,6 +7,10 @@
 
 История изменений **nfqws-menu**. Актуальная версия скрипта — в [`README.md`](README.md).
 
+### 0.11.11
+
+- **apply strategy** — проверка **lua** из `--lua-init` (есть `.lua` или `.lua.gz`); отсутствующие скачиваются из `strategies/lua/` (например `flowseal-compat.lua`)
+
 ### 0.11.10
 
 - **strategies** — во всех `*.conf` (nfqws1/nfqws2): `NFQWS_EXTRA_ARGS="$MODE_LIST"` (вместо MODE_ALL/MODE_AUTO)
