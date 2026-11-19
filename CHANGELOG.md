@@ -1,3 +1,7 @@
+### 0.11.13
+
+- **RCI 5.1.9**: при 403 на `:79` — fallback через SCGI `/var/run/ndm.scgi.socket` (как rci79/awg-manager); ложный `[!]` Netfilter только при реальном JSON без `opkg-kmod-netfilter`
+
 ### 0.11.03
 
 - **U / awg UPX auto** — если есть `sing-box` рядом с awg-manager → `INSTALL_AWG=1 INSTALL_SB=1` (оба), без порога размера UPX

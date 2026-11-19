@@ -10,7 +10,7 @@
 
 set -e
 
-SCRIPT_VERSION="0.11.11"
+SCRIPT_VERSION="0.11.13"
 
 RAW_BASE="https://raw.githubusercontent.com/rndnaame/nfqws-menu/main"
 STRATEGIES_API="https://api.github.com/repos/rndnaame/nfqws-menu/contents/strategies"
@@ -842,15 +842,92 @@ _arch_from_opkg_conf() {
   [ -n "$from_url" ] && printf '%s\n' "$from_url"
 }
 
-# RCI show/version: модель + наличие opkg-kmod-netfilter (один раз за сессию)
+# RCI show/version: модель + opkg-kmod-netfilter (один раз за сессию).
+# HTTP :79 на 5.1.9 часто 403 без токена; fallback — SCGI /var/run/ndm.scgi.socket
+# (как awg-manager / rci79, AUTH_ALLOWED=1). https://git.bobyrev.com/PCA/rci79
+_rci_scgi_get() {
+  # $1 = path (/rci/show/version) → JSON на stdout
+  local path="${1:-/rci/show/version}" sock="/var/run/ndm.scgi.socket" resp
+  [ -S "$sock" ] || return 1
+
+  resp=$(
+    RCI_PATH="$path" awk '
+      function add(k, v) { h = h k "\0" v "\0" }
+      BEGIN {
+        p = ENVIRON["RCI_PATH"]
+        if (p == "") p = "/rci/show/version"
+        h = ""
+        add("CONTENT_LENGTH", "0")
+        add("SCGI", "1")
+        add("REQUEST_METHOD", "GET")
+        add("REQUEST_URI", p)
+        add("NORMALIZED_URI", p)
+        add("QUERY_STRING", "")
+        add("CONTENT_TYPE", "")
+        add("SERVER_PROTOCOL", "HTTP/1.1")
+        add("REMOTE_ADDR", "127.0.0.1")
+        add("SERVER_ADDR", "127.0.0.1")
+        add("SERVER_PORT", "79")
+        add("HTTP_HOST", "127.0.0.1")
+        add("REMOTE_IDENT", "nfqws-menu")
+        add("SCGI_AGENT", "http/rci")
+        add("AUTH_ALLOWED", "1")
+        printf "%d:%s,", length(h), h
+      }
+    ' 2>/dev/null | {
+      if command -v socat >/dev/null 2>&1; then
+        socat -t3 STDIO "UNIX-CONNECT:$sock" 2>/dev/null
+      elif command -v nc >/dev/null 2>&1; then
+        nc -w 3 -U "$sock" 2>/dev/null
+      else
+        cat >/dev/null
+        exit 1
+      fi
+    }
+  ) || return 1
+
+  [ -n "$resp" ] || return 1
+  case "$resp" in
+    *\"model\"*|*\"title\"*|*\"components\"*|*\"release\"*) ;;
+    *) return 1 ;;
+  esac
+  printf '%s' "$resp" | sed -n '/{/,$p'
+  return 0
+}
+
 _rci_fetch() {
-  local json
+  local json code=""
   [ "$RCI_CHECKED" = "1" ] && return 0
   RCI_CHECKED=1
-  json=$(curl -s --connect-timeout 2 --max-time 3 "http://127.0.0.1:79/rci/show/version" 2>/dev/null) \
-    || json=$(wget -qO- -T 3 "http://127.0.0.1:79/rci/show/version" 2>/dev/null) \
-    || json=""
-  [ -n "$json" ] || return 0
+  RCI_HAS_NF_KMOD=""
+
+  # 1) HTTP 127.0.0.1:79 (в т.ч. если стоит rci79)
+  if command -v curl >/dev/null 2>&1; then
+    json=$(curl -s -w '\n%{http_code}' --connect-timeout 2 --max-time 3 \
+      "http://127.0.0.1:79/rci/show/version" 2>/dev/null) || json=""
+    code=$(printf '%s\n' "$json" | tail -n 1)
+    json=$(printf '%s\n' "$json" | sed '$d')
+  else
+    json=$(wget -qO- -T 3 "http://127.0.0.1:79/rci/show/version" 2>/dev/null) || json=""
+    code=""
+  fi
+
+  case "$code" in
+    200|"") ;;
+    *) json="" ;;
+  esac
+  case "$json" in
+    *\"model\"*|*\"title\"*|*\"components\"*|*\"release\"*) ;;
+    *)
+      # 2) SCGI ndm (5.1.9 без токена)
+      json=$(_rci_scgi_get "/rci/show/version" 2>/dev/null) || json=""
+      ;;
+  esac
+
+  case "$json" in
+    *\"model\"*|*\"title\"*|*\"components\"*|*\"release\"*) ;;
+    *) return 0 ;;
+  esac
 
   ROUTER_MODEL=$(printf '%s' "$json" | sed -n 's/.*"model"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
   ROUTER_TITLE=$(printf '%s' "$json" | sed -n 's/.*"title"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
@@ -860,6 +937,7 @@ _rci_fetch() {
     RCI_HAS_NF_KMOD=0
   fi
 }
+
 
 # Строка под заголовком: Модель: WR3000P (KN-3811) 5.1.5 aarch64
 # ARCH зелёный из opkg, жёлтый из opkg.conf / uname.
