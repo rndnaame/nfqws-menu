@@ -4,7 +4,7 @@
 
 Репозиторий также служит хранилищем готовых **стратегий** обхода DPI, **blobs** и **lists**.
 
-- Скрипт: `nfqws-menu.sh` (текущая версия **0.11.11**)
+- Скрипт: `nfqws-menu.sh` (текущая версия **0.11.14**)
 - Стратегии: `strategies/`
 - Hosts: `hosts`
 - Контрольные суммы: `SHA256SUMS`, `strategies/blobs/SHA256SUMS`
@@ -132,7 +132,9 @@ menu 99              # обновить сам скрипт меню
       00. Выход
 ```
 
-Горячие клавиши: **S** — сервисные утилиты (UPX, Dropbear fix, починить OPKG); **U** — безопасное обновление Entware (см. ниже); **77** — смена языка RU↔EN.
+Горячие клавиши: **S** — сервисные утилиты (UPX, Dropbear fix, OPKG, **rci79**); **U** — безопасное обновление Entware (см. ниже); **77** — смена языка RU↔EN.
+
+**rci79** (S → 4 / `menu rci79`): на KeeneticOS/Netcraze **5.1.9** локальный RCI `127.0.0.1:79` отвечает 403 без токена. Утилита поднимает прокси SCGI (`/var/run/ndm.scgi.socket`) и заворот `:79→7979`. Upstream: [PCA/rci79](https://git.bobyrev.com/PCA/rci79). Бинарники в **`rci79/`** (зеркало v1.0.0); установка: GitHub raw → jsDelivr → fallback upstream releases.
 
 Пример блока статуса:
 
@@ -583,6 +585,12 @@ curl -fsSL https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/installer_
 <details>
 <summary><strong>Недавние версии (0.11.x / 0.10.x)</strong> — нажмите, чтобы развернуть</summary>
 
+### 0.11.14
+- **rci79** — `installer_rci79.sh`, пункт **S → 4**, CLI `menu rci79` (RCI 5.1.9 → SCGI; upstream PCA/rci79)
+
+### 0.11.13
+- **RCI**: SCGI fallback + без ложного Netfilter при 403
+
 ### 0.11.08
 - **CLI aliases** — `menu firc` / `awg`/`awgm` / `warp`/`warpscout` / `nfqws` и др.; `menu help` / `-h`
 
@@ -627,6 +635,8 @@ curl -fsSL https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/installer_
 nfqws-menu/
 ├── nfqws-menu.sh          # Главный скрипт меню
 ├── hosts                  # Секции IP DOMAIN для п. 7 (ndmc ip host)
+├── rci79/                 # Бинарники rci79 (aarch64/mipsel/mips), зеркало PCA/rci79
+├── installer_rci79.sh     # Установка rci79 (зеркало → upstream)
 ├── SHA256SUMS             # Хеши файлов репозитория (список стратегий без API)
 ├── README.md
 ├── .github/workflows/

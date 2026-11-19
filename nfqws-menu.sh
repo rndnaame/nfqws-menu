@@ -10,7 +10,7 @@
 
 set -e
 
-SCRIPT_VERSION="0.11.13"
+SCRIPT_VERSION="0.11.14"
 
 RAW_BASE="https://raw.githubusercontent.com/rndnaame/nfqws-menu/main"
 STRATEGIES_API="https://api.github.com/repos/rndnaame/nfqws-menu/contents/strategies"
@@ -106,6 +106,7 @@ ui_apply_lang() {
       LBL_S1="Сжать bin/sbin (UPX)"
       LBL_S2="Dropbear fix"
       LBL_S3="Починить OPKG"
+      LBL_S4="rci79 (RCI :79 → SCGI, 5.1.9)"
       LBL_U="Обновить все пакеты"
       LBL_1="Установка NFQWS / NFQWS2"
       LBL_3="Выбор стратегии"
@@ -153,6 +154,7 @@ ui_apply_lang() {
       LBL_S1="Compress bin/sbin (UPX)"
       LBL_S2="Dropbear fix"
       LBL_S3="Fix OPKG"
+      LBL_S4="rci79 (RCI :79 → SCGI, 5.1.9)"
       LBL_U="Upgrade all packages"
       LBL_1="Install NFQWS / NFQWS2"
       LBL_3="Select strategy"
@@ -7015,13 +7017,59 @@ service_opkg_fix() {
   return 1
 }
 
+
+# ---------------------------------------------------------------------------
+# rci79 — RCI на 5.1.9 через SCGI (upstream: git.bobyrev.com/PCA/rci79)
+# ---------------------------------------------------------------------------
+RCI79_INSTALL_URL="${RCI79_INSTALL_URL:-${RAW_BASE}/installer_rci79.sh}"
+
+menu_rci79() {
+  local url="$RCI79_INSTALL_URL"
+  echo
+  info "rci79 — локальный RCI :79 через SCGI ndm (KeeneticOS / Netcraze 5.1.9)"
+  info "Upstream: https://git.bobyrev.com/PCA/rci79"
+  if [ -x /opt/sbin/rci79 ]; then
+    info "Сейчас: установлен (/opt/sbin/rci79)"
+  else
+    info "Сейчас: не установлен"
+  fi
+  echo
+  echo "  1) Установить / обновить"
+  echo "  2) Удалить"
+  echo "  0) ${LBL_BACK_ITEM:-Back}"
+  echo
+  ask "${LBL_YOUR_CHOICE:-Your choice} [0]: "
+  read -r c
+  case "$c" in
+    1)
+      run_remote_sh "$url" 1500 || return 1
+      ;;
+    2)
+      if [ ! -x /opt/sbin/rci79 ] && [ ! -f /opt/etc/init.d/S98rci79 ]; then
+        info "rci79 не установлен"
+        return 0
+      fi
+      [ -x /opt/etc/init.d/S98rci79 ] && /opt/etc/init.d/S98rci79 stop 2>/dev/null || true
+      iptables -t nat -D OUTPUT -d 127.0.0.1 -p tcp --dport 79 -j REDIRECT --to-ports 7979 2>/dev/null || true
+      rm -f /opt/etc/init.d/S98rci79 /opt/etc/ndm/netfilter.d/50-rci79.sh /opt/sbin/rci79
+      for s in /opt/etc/init.d/S99hrneo /opt/etc/init.d/S99hrweb; do
+        [ -x "$s" ] && "$s" restart 2>/dev/null || true
+      done
+      info "rci79 удалён"
+      ;;
+    0|"") return 0 ;;
+    *) warn "${LBL_INVALID:-Invalid menu option}" ;;
+  esac
+}
+
 menu_service() {
   while true; do
     echo
-    printf '%s\n' "${BOLD}${CYAN}[::]  ${LBL_REMOVE} (S)${NC}"
+    printf '%s\n' "${BOLD}${CYAN}[::]  SERVICE [S]${NC}"
     echo "      1. $LBL_S1"
     echo "      2. $LBL_S2"
     echo "      3. $LBL_S3"
+    echo "      4. ${LBL_S4:-rci79 (RCI :79 → SCGI, 5.1.9)}"
     echo "      U. $LBL_U"
     echo "      0. ${LBL_BACK_ITEM}"
     echo
@@ -7031,9 +7079,10 @@ menu_service() {
       1) service_upx_compress || true ;;
       2) service_dropbear_fix || true ;;
       3) service_opkg_fix || true ;;
+      4) menu_rci79 || true ;;
       U|u) opkg_upgrade_all || true ;;
       0|"") return 0 ;;
-      *) warn "Неверный выбор." ;;
+      *) warn "${LBL_INVALID:-Invalid menu option}" ;;
     esac
   done
 }
@@ -7427,6 +7476,7 @@ run_menu_choice() {
       18) menu_warpscout || true ;;
       19) menu_antiscan || true ;;
       S|s) menu_service || true ;;
+      rci79) menu_rci79 || true ;;
       U|u) opkg_upgrade_all || true ;;
       o|O) menu_opera_hidden || true ;;
       77) menu_change_language || true ;;
@@ -7585,6 +7635,7 @@ resolve_menu_arg() {
     18|warp|warpscout|warps) printf '%s\n' "18" ;;
     19|antiscan|ascn) printf '%s\n' "19" ;;
     s|service) printf '%s\n' "S" ;;
+    rci79|rci) printf '%s\n' "rci79" ;;
     u|upgrade|opkg-upgrade) printf '%s\n' "U" ;;
     o|opera|opera-proxy) printf '%s\n' "o" ;;
     77|lang|language) printf '%s\n' "77" ;;
@@ -7621,6 +7672,7 @@ menu_cli_help() {
   echo "  18 warp|warpscout"
   echo "  19 antiscan|ascn"
   echo "  S  service                service tools"
+  echo "     rci79|rci              rci79 (RCI 5.1.9 SCGI)"
   echo "  U  u|upgrade              upgrade all packages"
   echo "  77 lang                   interface language"
   echo "  88 remove                 remove packages"
