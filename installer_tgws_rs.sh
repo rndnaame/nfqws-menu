@@ -249,6 +249,67 @@ tg_ws_proxy_rs_free_port() {
   return 1
 }
 
+# Предпочтительные порты слушателя (клиенты → прокси): 1443 → 5443 → 8443,
+# иначе по порядку после 1443 (1444…), пропуская уже проверенные предпочтительные.
+# Если текущий PORT свободен или на нём уже наш tg-ws-proxy-rs — оставляем.
+tg_ws_proxy_rs_pick_listen_port() {
+  local cur p
+  cur=$(tg_ws_proxy_rs_conf_get PORT 2>/dev/null) || cur=''
+  [ -n "$cur" ] || cur=1443
+
+  # наш процесс уже слушает cur — не трогаем
+  if service_is_up tg-ws-proxy-rs && port_is_open "$cur"; then
+    echo "$cur"
+    return 0
+  fi
+  # cur свободен — оставляем (в т.ч. после stop перед reinstall)
+  if ! port_is_open "$cur"; then
+    echo "$cur"
+    return 0
+  fi
+
+  for p in 1443 5443 8443; do
+    port_is_open "$p" || { echo "$p"; return 0; }
+  done
+  p=1444
+  while [ "$p" -le 1600 ]; do
+    case "$p" in 5443|8443) p=$((p + 1)); continue ;; esac
+    port_is_open "$p" || { echo "$p"; return 0; }
+    p=$((p + 1))
+  done
+  echo "1443"
+  return 1
+}
+
+# После install/upgrade: если PORT занят чужим процессом — переключить
+# на предпочтительный свободный и перезапустить.
+tg_ws_proxy_rs_ensure_listen_port() {
+  local cur need
+  [ -f "$TG_WS_PROXY_RS_CONF" ] || return 0
+  cur=$(tg_ws_proxy_rs_conf_get PORT)
+  [ -n "$cur" ] || cur=1443
+  need=$(tg_ws_proxy_rs_pick_listen_port) || need="$cur"
+
+  # уже слушаем cur нашим процессом
+  if service_is_up tg-ws-proxy-rs && port_is_open "$cur" && [ "$need" = "$cur" ]; then
+    return 0
+  fi
+
+  if [ "$need" != "$cur" ]; then
+    warn "Порт $cur занят — переключаем слушатель на $need (приоритет: 1443, 5443, 8443)."
+    tg_ws_proxy_rs_conf_set PORT "$need" || return 1
+    tg_ws_proxy_rs_restart || true
+    info "PORT=$need (обновите tg:// ссылку на клиентах, если порт сменился)."
+    return 0
+  fi
+
+  # cur совпал с need, но сервис мог не подняться на занятом — перезапуск
+  if ! port_is_open "$cur"; then
+    tg_ws_proxy_rs_restart || true
+  fi
+  return 0
+}
+
 # Имя релизного архива — то, что инсталлер скачает и распакует. Меню нужно оно
 # до установки, чтобы показать размер, поэтому здесь повторены и источник
 # архитектуры (opkg print-architecture), и таблица entware_binary_target из
@@ -479,6 +540,7 @@ tg_ws_proxy_rs_install() {
   fi
   tg_ws_proxy_rs_prune_backups || true
   tg_ws_proxy_rs_disable_go_init || true
+  tg_ws_proxy_rs_ensure_listen_port || true
   return 0
 }
 
