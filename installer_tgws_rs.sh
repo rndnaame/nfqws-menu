@@ -12,8 +12,8 @@
 
 # Версия самого установщика (не бинаря tg-ws-proxy-rs). Меняйте при правках
 # этого файла — в логе сразу видно, свежий скрипт или кэш CDN/GitHub.
-INSTALLER_VERSION="1.4.2"
-INSTALLER_FEATURES="cf-first-probe,port-1443-5443-8443,gh-mirror,no-backup,probe-fast"
+INSTALLER_VERSION="1.4.3"
+INSTALLER_FEATURES="cf-first-probe,port-1443-5443-8443,gh-mirror,no-backup,probe-fast,auto-remove-on-fail"
 
 # ANSI (portable для ash/BusyBox)
 if [ -t 1 ]; then
@@ -912,23 +912,34 @@ menu_tg_ws_proxy_rs() {
     if tg_ws_proxy_rs_tune; then
       echo
       info "Связь проверена: resPQ от DC Telegram."
-    else
-      echo
-      warn "Связь не подтвердилась. Последние строки лога:"
-      tail -n 8 "$TG_WS_PROXY_RS_LOG" 2>/dev/null | sed 's/^/    /'
+      tg_ws_proxy_rs_print_link
+      return 0
     fi
+    echo
+    warn "Связь не подтвердилась — с этой сети до Telegram пути нет."
+    warn "tg-ws-proxy без рабочего CF/DC/MTProto бесполезен (только память/CPU)."
+    tail -n 6 "$TG_WS_PROXY_RS_LOG" 2>/dev/null | sed 's/^/    /'
+    echo
+    # default Y: при полном FAIL не оставляем «пустой» сервис
+    if confirm_yes "Удалить tg-ws-proxy-rs (бинарь + конфиг)?"; then
+      remove_tg_ws_proxy_rs force
+      return 0
+    fi
+    warn "Оставлен как есть. Ссылка, скорее всего, в Telegram не заработает."
   fi
 
   tg_ws_proxy_rs_print_link
 }
 
+# $1=force — без вопросов снести и конфиг (после провала всех путей)
 remove_tg_ws_proxy_rs() {
+  local force="${1:-}"
   is_tg_ws_proxy_rs_installed || { warn "tg-ws-proxy-rs не установлен."; return 0; }
   [ -x "$TG_WS_PROXY_RS_INIT" ] && "$TG_WS_PROXY_RS_INIT" stop 2>/dev/null
   rm -f "$TG_WS_PROXY_RS_INIT" "$TG_WS_PROXY_RS_BIN"
   info "tg-ws-proxy-rs удалён."
   if [ -d "$TG_WS_PROXY_RS_CONF_DIR" ]; then
-    if confirm_no "Удалить конфиг и секрет ($TG_WS_PROXY_RS_CONF_DIR)?"; then
+    if [ "$force" = "force" ] || confirm_no "Удалить конфиг и секрет ($TG_WS_PROXY_RS_CONF_DIR)?"; then
       rm -rf "$TG_WS_PROXY_RS_CONF_DIR"
       info "Каталог $TG_WS_PROXY_RS_CONF_DIR удалён."
     else
