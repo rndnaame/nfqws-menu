@@ -310,6 +310,8 @@ github_alt_urls() {
       owner="${rest%%/*}"; rest="${rest#*/}"
       repo="${rest%%/*}"; rest="${rest#*/}"
       ref="${rest%%/*}"; path_rest="${rest#*/}"
+      # cache-bust query (?t=…) не входит в путь для CDN
+      case "$path_rest" in *\?*) path_rest="${path_rest%%\?*}" ;; esac
       if [ -n "$owner" ] && [ -n "$repo" ] && [ -n "$ref" ] && [ -n "$path_rest" ]; then
         case "$ref" in
           refs/heads/*) ref="${ref#refs/heads/}" ;;
@@ -675,9 +677,15 @@ _run_remote_sh_restore_traps() {
 }
 
 run_remote_sh() {
-  local url="$1" min_bytes="${2:-8000}" tmp rc=0 _rpid=""
+  local url="$1" min_bytes="${2:-8000}" tmp rc=0 _rpid="" ver h sz
   _kill_stale_remote_sh
   tmp="/tmp/nfqws-remote-$$.sh"
+  # anti-cache: raw.githubusercontent.com иногда отдаёт старый main
+  case "$url" in
+    *raw.githubusercontent.com/*)
+      url="${url%%\?*}?t=$(date +%s)"
+      ;;
+  esac
   # при INT/TERM — убить дочерний remote, иначе остаются зомби sh
   trap 'if [ -n "${_rpid:-}" ]; then kill -9 "$_rpid" 2>/dev/null; fi; rm -f /tmp/nfqws-remote-$$.sh 2>/dev/null; _run_remote_sh_restore_traps' EXIT INT TERM
 
@@ -686,6 +694,18 @@ run_remote_sh() {
     rm -f "$tmp"
     _run_remote_sh_restore_traps
     return 1
+  fi
+
+  # какая версия реально скачалась (не кэш в голове)
+  ver=$(sed -n 's/^INSTALLER_VERSION="\([^"]*\)".*/\1/p' "$tmp" 2>/dev/null | head -1)
+  [ -z "$ver" ] && ver=$(sed -n 's/^SCRIPT_VERSION="\([^"]*\)".*/\1/p' "$tmp" 2>/dev/null | head -1)
+  h=$(sha256sum "$tmp" 2>/dev/null | awk '{print $1}' | cut -c1-12)
+  [ -z "$h" ] && h=$(md5sum "$tmp" 2>/dev/null | awk '{print $1}' | cut -c1-12)
+  sz=$(wc -c < "$tmp" 2>/dev/null | tr -d ' \r\n')
+  if [ -n "$ver" ]; then
+    info "Скачан скрипт: v${ver}  hash:${h:-?}  ${sz:-?} байт"
+  else
+    info "Скачан скрипт: hash:${h:-?}  ${sz:-?} байт (без метки версии)"
   fi
 
   # opkg.lock от предыдущих update → удалённые скрипты не видят arch
@@ -1441,7 +1461,7 @@ install_nfqws1() {
     fi
   fi
   install_deps
-  ensure_opkg_repo "nfqws-keenetic" "$(_opkg_nfqws_pick_base nfqws "$ARCH")"
+  ensure_opkg_repo "nfqws-keenetic" "$(_opkg_nfqws_sw_base nfqws "$ARCH")"
   if opkg install nfqws-keenetic; then
     refresh_opkg_cache
     if is_installed "nfqws-keenetic"; then
@@ -1473,7 +1493,7 @@ install_nfqws2() {
     fi
   fi
   install_deps
-  ensure_opkg_repo "nfqws2-keenetic" "$(_opkg_nfqws_pick_base nfqws2 "$ARCH")"
+  ensure_opkg_repo "nfqws2-keenetic" "$(_opkg_nfqws_sw_base nfqws2 "$ARCH")"
   if opkg install nfqws2-keenetic; then
     refresh_opkg_cache
     if is_installed "nfqws2-keenetic"; then
@@ -1751,20 +1771,29 @@ menu_install_ipk_direct() {
 
   need_arch || return 1
 
-  # Официальный github.io — основной; sw.ext.io только fallback
-  base1=$(_opkg_nfqws_pick_base nfqws "$ARCH")
-  base2=$(_opkg_nfqws_pick_base nfqws2 "$ARCH")
-  baseweb=$(_opkg_nfqws_pick_base web all)
+  base1=$(_opkg_nfqws_sw_base nfqws "$ARCH")
+  base2=$(_opkg_nfqws_sw_base nfqws2 "$ARCH")
+  baseweb=$(_opkg_nfqws_sw_base web all)
 
   info "Запрос крайних версий .ipk (архитектура: $ARCH) ..."
   meta=$(fetch_ipk_meta "$base1" "nfqws-keenetic" 2>/dev/null) && v1=$(printf '%s\n' "$meta" | head -1 | cut -f1 | tr -d '\r')
   meta=$(fetch_ipk_meta "$base2" "nfqws2-keenetic" 2>/dev/null) && v2=$(printf '%s\n' "$meta" | head -1 | cut -f1 | tr -d '\r')
   meta=$(fetch_ipk_meta "$baseweb" "nfqws-keenetic-web" 2>/dev/null) && vweb=$(printf '%s\n' "$meta" | head -1 | cut -f1 | tr -d '\r')
+  # fallback github.io если sw.ext.io недоступен
+  if [ -z "$v1" ] || [ "$v1" = "?" ]; then
+    meta=$(fetch_ipk_meta "https://nfqws.github.io/nfqws-keenetic/${ARCH}" "nfqws-keenetic" 2>/dev/null) && v1=$(printf '%s\n' "$meta" | head -1 | cut -f1 | tr -d '\r')
+  fi
+  if [ -z "$v2" ] || [ "$v2" = "?" ]; then
+    meta=$(fetch_ipk_meta "https://nfqws.github.io/nfqws2-keenetic/${ARCH}" "nfqws2-keenetic" 2>/dev/null) && v2=$(printf '%s\n' "$meta" | head -1 | cut -f1 | tr -d '\r')
+  fi
+  if [ -z "$vweb" ] || [ "$vweb" = "?" ]; then
+    meta=$(fetch_ipk_meta "https://nfqws.github.io/nfqws-keenetic-web/all" "nfqws-keenetic-web" 2>/dev/null) && vweb=$(printf '%s\n' "$meta" | head -1 | cut -f1 | tr -d '\r')
+  fi
   [ -z "$v1" ] && v1="?"
   [ -z "$v2" ] && v2="?"
   [ -z "$vweb" ] && vweb="?"
   if [ "$v1" = "?" ] && [ "$v2" = "?" ] && [ "$vweb" = "?" ]; then
-    warn "Не удалось получить версии (nfqws.github.io / sw.ext.io). Проверьте сеть или туннель."
+    warn "Не удалось получить версии (sw.ext.io / github.io). Проверьте сеть или туннель."
   fi
 
   echo
@@ -1875,7 +1904,7 @@ install_nfqws2_ui() {
 install_web() {
   info "Установка nfqws-keenetic-web..."
   install_deps
-  ensure_opkg_repo "nfqws-keenetic-web" "$(_opkg_nfqws_pick_base web all)"
+  ensure_opkg_repo "nfqws-keenetic-web" "$(_opkg_nfqws_sw_base web all)"
   opkg install nfqws-keenetic-web
   info "Веб-интерфейс установлен."
   info "Адрес: http://<IP-роутера>:90"
@@ -6684,23 +6713,7 @@ _opkg_github_io_to_sw() {
   esac
 }
 
-# Официальный feed: nfqws.github.io (приоритет).
-_opkg_nfqws_gh_base() {
-  local kind="$1" a="$2" arch
-  case "$a" in
-    aarch64|arm64) arch=aarch64 ;;
-    mipsel) arch=mipsel ;;
-    mips) arch=mips ;;
-    *) arch=all ;;
-  esac
-  case "$kind" in
-    nfqws2|nfqws2-keenetic) printf 'https://nfqws.github.io/nfqws2-keenetic/%s\n' "$arch" ;;
-    web|nfqws-keenetic-web|nfqws-web) printf 'https://nfqws.github.io/nfqws-keenetic-web/all\n' ;;
-    nfqws|nfqws-keenetic|*) printf 'https://nfqws.github.io/nfqws-keenetic/%s\n' "$arch" ;;
-  esac
-}
-
-# Зеркало sw.ext.io (fallback, если github.io недоступен).
+# База sw.ext.io для пакета по ARCH (aarch64|mipsel|mips|…).
 _opkg_nfqws_sw_base() {
   local kind="$1" a="$2" arch
   case "$a" in
@@ -6714,33 +6727,6 @@ _opkg_nfqws_sw_base() {
     web|nfqws-keenetic-web|nfqws-web) printf 'https://sw.ext.io/nfqws-web/all\n' ;;
     nfqws|nfqws-keenetic|*) printf 'https://sw.ext.io/nfqws/%s\n' "$arch" ;;
   esac
-}
-
-# Выбрать рабочий base: сначала github.io, иначе sw.ext.io.
-_opkg_nfqws_pick_base() {
-  local kind="$1" a="$2" gh sw
-  gh=$(_opkg_nfqws_gh_base "$kind" "$a")
-  sw=$(_opkg_nfqws_sw_base "$kind" "$a")
-  if _opkg_repo_reachable "$gh" 3 12 2>/dev/null; then
-    info "Источник пакетов (официальный): $gh" >&2
-    printf '%s\n' "$gh"
-    return 0
-  fi
-  warn "nfqws.github.io недоступен — пробуем зеркало sw.ext.io ..." >&2
-  if _opkg_repo_reachable "$sw" 3 12 2>/dev/null; then
-    info "Источник пакетов (зеркало): $sw" >&2
-    printf '%s\n' "$sw"
-    return 0
-  fi
-  # HTTP-вариант зеркала
-  sw=$(printf '%s\n' "$sw" | sed 's|^https://|http://|')
-  if _opkg_repo_reachable "$sw" 3 12 2>/dev/null; then
-    info "Источник пакетов (зеркало HTTP): $sw" >&2
-    printf '%s\n' "$sw"
-    return 0
-  fi
-  warn "Оба источника недоступны — оставляем официальный URL: $gh" >&2
-  printf '%s\n' "$gh"
 }
 
 # Переписать src/gz name url в файле conf.
@@ -6792,44 +6778,11 @@ _opkg_heal_extra_repos() {
           _opkg_print_probe 0 200
           printf '\n'
 
-          # Приоритет: если текущий URL — sw и мёртв → официальный github.io;
-          # если github.io мёртв → зеркало sw.ext.io.
-          case "$url" in
-            *sw.ext.io/nfqws*|*sw.ext.io/nfqws2*|*sw.ext.io/nfqws-web*)
-              gh=""
-              case "$name" in
-                nfqws2-keenetic|nfqws2) gh=$(_opkg_nfqws_gh_base nfqws2 "${ARCH:-all}") ;;
-                nfqws-keenetic-web|nfqws-web) gh=$(_opkg_nfqws_gh_base web all) ;;
-                nfqws-keenetic|nfqws) gh=$(_opkg_nfqws_gh_base nfqws "${ARCH:-all}") ;;
-              esac
-              if [ -n "$gh" ]; then
-                printf '    официальный … '
-                if _opkg_repo_reachable "$gh" 2 8; then
-                  _opkg_print_probe 1 200
-                  printf ' → %s\n' "$gh"
-                  _opkg_rewrite_repo_url "$f" "$name" "$gh"
-                  fixed=$((fixed + 1))
-                  continue
-                fi
-                _opkg_print_probe 0 200
-                printf '\n'
-              fi
-              ;;
-            *nfqws.github.io*|*github.io/nfqws*)
-              sw=$(_opkg_sw_mirror_for "$name" "$url") || sw=""
-              if [ -n "$sw" ] && _opkg_apply_sw_mirror "$f" "$name" "$sw"; then
-                fixed=$((fixed + 1))
-                continue
-              fi
-              ;;
-            *)
-              sw=$(_opkg_sw_mirror_for "$name" "$url") || sw=""
-              if [ -n "$sw" ] && _opkg_apply_sw_mirror "$f" "$name" "$sw"; then
-                fixed=$((fixed + 1))
-                continue
-              fi
-              ;;
-          esac
+          sw=$(_opkg_sw_mirror_for "$name" "$url") || sw=""
+          if [ -n "$sw" ] && _opkg_apply_sw_mirror "$f" "$name" "$sw"; then
+            fixed=$((fixed + 1))
+            continue
+          fi
           printf '%s|%s|%s\n' "$f" "$name" "$url" >> "$fail"
           nfail=$((nfail + 1))
           ;;

@@ -10,6 +10,11 @@
 # Вызов из nfqws-menu (пункт 16):
 #   run_menu_remote_sh "16" "TG WS Proxy Rust" "$TGWS_RS_INSTALL_URL" 2000
 
+# Версия самого установщика (не бинаря tg-ws-proxy-rs). Меняйте при правках
+# этого файла — в логе сразу видно, свежий скрипт или кэш CDN/GitHub.
+INSTALLER_VERSION="1.4.0"
+INSTALLER_FEATURES="cf-first-probe,port-1443-5443-8443,gh-mirror,backup-prune1"
+
 # ANSI (portable для ash/BusyBox)
 if [ -t 1 ]; then
   ESC=$(printf '\033')
@@ -852,8 +857,15 @@ tg_ws_proxy_rs_print_link() {
 }
 
 menu_tg_ws_proxy_rs() {
-  local fresh=0
+  local fresh=0 h=''
   echo
+  info "installer_tgws_rs.sh  v${INSTALLER_VERSION}"
+  info "фичи: ${INSTALLER_FEATURES}"
+  if [ -f "$0" ]; then
+    h=$(sha256sum "$0" 2>/dev/null | awk '{print $1}' | cut -c1-12)
+    [ -z "$h" ] && h=$(md5sum "$0" 2>/dev/null | awk '{print $1}' | cut -c1-12)
+    [ -n "$h" ] && info "файл: $0  hash:${h}"
+  fi
 
   if is_tg_ws_proxy_rs_installed; then
     info "TG WS Proxy Rust — установлено $(tg_ws_proxy_rs_version)"
