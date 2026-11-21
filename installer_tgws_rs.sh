@@ -12,8 +12,8 @@
 
 # Версия самого установщика (не бинаря tg-ws-proxy-rs). Меняйте при правках
 # этого файла — в логе сразу видно, свежий скрипт или кэш CDN/GitHub.
-INSTALLER_VERSION="1.4.0"
-INSTALLER_FEATURES="cf-first-probe,port-1443-5443-8443,gh-mirror,backup-prune1"
+INSTALLER_VERSION="1.4.1"
+INSTALLER_FEATURES="cf-first-probe,port-1443-5443-8443,gh-mirror,backup-prune1,probe-fast"
 
 # ANSI (portable для ash/BusyBox)
 if [ -t 1 ]; then
@@ -576,7 +576,18 @@ tg_ws_proxy_rs_disable_go_init() {
 # влезают в ту же строку, поэтому результат берём из [OK ] в строке.
 # На выходе «ms домен» по возрастанию, только ответившие.
 tg_ws_proxy_rs_measure_domains() {
-  "$TG_WS_PROXY_RS_BIN" --check --default-domains 2>&1 | while IFS= read -r line; do
+  # короткие таймауты: иначе мёртвые CF-домены тянут замер минутами
+  (
+    export TG_WS_CONNECT_TIMEOUT=2
+    export TG_CF_CONNECT_TIMEOUT=2
+    export TG_UPSTREAM_CONNECT_TIMEOUT=2
+    export TG_HANDSHAKE_TIMEOUT=3
+    if command -v timeout >/dev/null 2>&1; then
+      timeout 40 "$TG_WS_PROXY_RS_BIN" --check --default-domains 2>&1
+    else
+      "$TG_WS_PROXY_RS_BIN" --check --default-domains 2>&1
+    fi
+  ) | while IFS= read -r line; do
     case "$line" in
       *"[OK ]"*) ;;
       *) continue ;;
@@ -593,11 +604,16 @@ tg_ws_proxy_rs_measure_domains() {
 # переменные окружения (с той же чисткой CR, что и там: файл мог побывать в
 # редакторе на Windows).
 tg_ws_proxy_rs_probe() {
-  local port out section verdict
+  local port out section verdict probe_args
   port=$(tg_ws_proxy_rs_free_port) || {
     warn "Нет свободного порта для проверки (заняты порты рядом с сервисным)."
     return 1
   }
+
+  # --default-domains в каждом прогоне снова гоняет весь список CF (десятки
+  # секунд при блокировке). Домены уже замерили отдельно → в пробе оставляем
+  # только CF_DOMAIN из конфига; --default-domains убираем из args.
+  probe_args=$(printf '%s' "${EXTRA_ARGS:-}" | sed 's/--default-domains//g' | tr -s ' ')
 
   out=$(
     scrub_and_source() {
@@ -610,15 +626,24 @@ tg_ws_proxy_rs_probe() {
     [ -n "$HOST" ] && export TG_HOST="$HOST"
     [ -n "$LINK_IP" ] && export TG_LINK_IP="$LINK_IP"
     export TG_SECRET="$SECRET"
-    # Community-список доменов здесь не включаем намеренно: он добавляет около
-    # 27 секунд на каждый прогон (31 с против 4 с в замере), а варианту лестницы
-    # не нужен — домены замеряются отдельно, один раз, до перебора.
     [ -n "$CF_DOMAIN" ] && export TG_CF_DOMAIN="$CF_DOMAIN"
     [ -n "$CF_WORKER_DOMAIN" ] && export TG_CF_WORKER_DOMAIN="$CF_WORKER_DOMAIN"
     [ -n "$MTPROTO_PROXY" ] && export TG_MTPROTO_PROXY="$MTPROTO_PROXY"
 
-    # shellcheck disable=SC2086 # EXTRA_ARGS — список аргументов, как его пишет инсталлер
-    "$TG_WS_PROXY_RS_BIN" --port "$port" --check-listener $EXTRA_ARGS 2>&1
+    # агрессивные таймауты только для пробы (сервисный конфиг не трогаем)
+    export TG_WS_CONNECT_TIMEOUT=2
+    export TG_CF_CONNECT_TIMEOUT=2
+    export TG_UPSTREAM_CONNECT_TIMEOUT=2
+    export TG_HANDSHAKE_TIMEOUT=3
+    export TG_WS_FAIL_PROBE_TIMEOUT=2
+    export TG_TCP_FALLBACK_TIMEOUT=2
+
+    # shellcheck disable=SC2086
+    if command -v timeout >/dev/null 2>&1; then
+      timeout 25 "$TG_WS_PROXY_RS_BIN" --port "$port" --check-listener $probe_args 2>&1
+    else
+      "$TG_WS_PROXY_RS_BIN" --port "$port" --check-listener $probe_args 2>&1
+    fi
   )
 
   # В том же прогоне проверяются и CF-домены из конфига, поэтому вердикт берём
@@ -660,9 +685,9 @@ tg_ws_proxy_rs_variant() {
 # Сервис не перезапускается: проба поднимает собственный слушатель и читает
 # конфиг с диска.
 tg_ws_proxy_rs_probe_variants() {
-  local i row dc args label ms
+  local i row dc args label ms total=5
   TG_WS_PROXY_RS_RESULTS=""
-  info "Проверяю варианты (по одному прогону на каждый, это самая долгая часть)…"
+  info "Проверяю варианты (до ~25 с на каждый, всего $total)…"
   i=1
   while :; do
     row=$(tg_ws_proxy_rs_variant "$i") || break
@@ -670,15 +695,16 @@ tg_ws_proxy_rs_probe_variants() {
     args=$(printf '%s' "$row" | cut -d'|' -f2)
     label=$(printf '%s' "$row" | cut -d'|' -f3)
 
-    # Ничего не печатаем: итог покажет список ниже, а строка на каждый вариант
-    # его же и дублировала.
+    info "  [$i/$total] $label …"
     tg_ws_proxy_rs_conf_set DC_IP "$dc"
     tg_ws_proxy_rs_conf_set EXTRA_ARGS "$args"
     if tg_ws_proxy_rs_probe; then
       ms="$TG_WS_PROXY_RS_LAST_MS"; [ -n "$ms" ] || ms=0
+      info "  [$i/$total] OK ${ms}ms"
       TG_WS_PROXY_RS_RESULTS="$TG_WS_PROXY_RS_RESULTS$i|$ms|OK|$label
 "
     else
+      info "  [$i/$total] FAIL"
       TG_WS_PROXY_RS_RESULTS="$TG_WS_PROXY_RS_RESULTS$i|999999|FAIL|$label
 "
     fi
