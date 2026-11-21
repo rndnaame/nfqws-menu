@@ -564,18 +564,26 @@ tg_ws_proxy_rs_probe() {
 }
 
 # Варианты лестницы: индекс → DC_IP | EXTRA_ARGS | описание.
-# Порядок здесь — порядок перебора; в списке для пользователя они сортируются
-# по замеру.
+# Порядок перебора: сначала CF-first (не начинать с ws — долгий таймаут
+# → клиент Telegram помечает прокси «неверным»). --default-domains нужен
+# для cfproxy/cfworker без своего домена. Индекс 5 — запасной TLS-MITM.
 tg_ws_proxy_rs_variant() {
   case "$1" in
     1) printf '%s|%s|%s\n' "$TG_WS_PROXY_RS_DC_TARGETS" \
-         "--pinned-upstream ws,cfproxy,tcp" "прямой WebSocket (ws → cfproxy → tcp)" ;;
+         "--default-domains --pinned-upstream cfworker,cfproxy,ws,tcp" \
+         "CF-first: cfworker → cfproxy → ws (рекомендуется)" ;;
     2) printf '%s|%s|%s\n' "$TG_WS_PROXY_RS_DC_TARGETS" \
-         "--pinned-upstream ws,cfproxy,tcp --fronting-domain $TG_WS_PROXY_RS_FRONTING_DOMAIN" \
+         "--default-domains --pinned-upstream cfproxy,ws,tcp" \
+         "cfproxy → ws → tcp" ;;
+    3) printf '%s|%s|%s\n' "$TG_WS_PROXY_RS_DC_TARGETS" \
+         "--default-domains --pinned-upstream ws,cfproxy,tcp" \
+         "прямой WebSocket (ws → cfproxy → tcp)" ;;
+    4) printf '%s|%s|%s\n' "$TG_WS_PROXY_RS_DC_TARGETS" \
+         "--default-domains --pinned-upstream ws,cfproxy,tcp --fronting-domain $TG_WS_PROXY_RS_FRONTING_DOMAIN" \
          "прямой WebSocket с фронтингом SNI" ;;
-    3) printf '%s|%s|%s\n' "" "" "лестница по умолчанию (cfproxy → tcp)" ;;
-    4) printf '%s|%s|%s\n' "" "--cf-disable-tls" \
-         "cfproxy поверх ws:// (порт 80 вместо 443)" ;;
+    5) printf '%s|%s|%s\n' "$TG_WS_PROXY_RS_DC_TARGETS" \
+         "--default-domains --cf-disable-tls --pinned-upstream cfproxy,ws" \
+         "cfproxy по ws://:80 (TLS-MITM / CF TLS режется)" ;;
     *) return 1 ;;
   esac
 }
@@ -613,35 +621,40 @@ tg_ws_proxy_rs_probe_variants() {
 }
 
 # Печатает список проверенных путей: обычные — с временем и пометкой быстрейшего,
-# запасной режим TLS-MITM — отдельной строкой ниже: он для сломанного TLS, а не
-# для скорости, и часто оказывается быстрее всех просто потому, что идёт по
-# открытому HTTP.
+# запасной TLS-MITM (индекс 5) — отдельной строкой. Если обычные все FAIL, а
+# fallback OK — он становится «быстрейшим» (раньше BEST был пуст и скрипт
+# писал «ни один путь не ответил» при живом [5]).
 tg_ws_proxy_rs_show_variants() {
   local rows normal fallback
   rows=$(printf '%s' "$TG_WS_PROXY_RS_RESULTS" | grep -v '^$')
   [ -n "$rows" ] || return 1
-  normal=$(printf '%s\n' "$rows" | awk -F'|' '$1 != 4')
-  fallback=$(printf '%s\n' "$rows" | awk -F'|' '$1 == 4')
+  normal=$(printf '%s\n' "$rows" | awk -F'|' '$1 != 5')
+  fallback=$(printf '%s\n' "$rows" | awk -F'|' '$1 == 5')
 
   TG_WS_PROXY_RS_BEST_IDX=$(printf '%s\n' "$normal" \
     | awk -F'|' '$3 == "OK" { print $2 " " $1 }' \
     | sort -n | awk 'NR == 1 { print $2 }')
+  # если обычные мертвы — взять fallback, если он OK
+  if [ -z "$TG_WS_PROXY_RS_BEST_IDX" ] && [ -n "$fallback" ]; then
+    TG_WS_PROXY_RS_BEST_IDX=$(printf '%s\n' "$fallback" \
+      | awk -F'|' '$3 == "OK" { print $1; exit }')
+  fi
 
   echo
   printf '%s\n' "${BOLD}Проверенные пути:${NC}"
   printf '%s\n' "$normal" | awk -F'|' -v best="$TG_WS_PROXY_RS_BEST_IDX" '
     {
-      n++
       mark = ($1 == best) ? "   <- быстрейший" : ""
-      if ($3 == "OK") printf "  [%d] OK   %5sms  %s%s\n", n, $2, $4, mark
-      else            printf "  [%d] FAIL         %s\n", n, $4
+      if ($3 == "OK") printf "  [%d] OK   %5sms  %s%s\n", $1, $2, $4, mark
+      else            printf "  [%d] FAIL         %s\n", $1, $4
     }'
   if [ -n "$fallback" ]; then
     echo
     printf '%s\n' "  запасной режим (TLS-MITM, метаданные идут открыто):"
-    printf '%s\n' "$fallback" | awk -F'|' '
+    printf '%s\n' "$fallback" | awk -F'|' -v best="$TG_WS_PROXY_RS_BEST_IDX" '
       {
-        if ($3 == "OK") printf "  [%d] OK   %5sms  %s\n", $1, $2, $4
+        mark = ($1 == best) ? "   <- быстрейший" : ""
+        if ($3 == "OK") printf "  [%d] OK   %5sms  %s%s\n", $1, $2, $4, mark
         else            printf "  [%d] FAIL         %s\n", $1, $4
       }'
   fi
@@ -723,6 +736,8 @@ tg_ws_proxy_rs_tune() {
   domains=$(tg_ws_proxy_rs_measure_domains | head -"$TG_WS_PROXY_RS_TOP_DOMAINS")
   if [ -z "$domains" ]; then
     warn "Ни один CF-домен не ответил — оставляем список по умолчанию."
+    warn "Если CF/workers режет провайдер: добавьте cloudflare.com и workers.dev"
+    warn "в hostlist nfqws2 (или свой --cf-domain в Cloudflare, SSL Flexible)."
   else
     best=$(printf '%s\n' "$domains" | tr '\n' ',' | sed 's/,$//')
     tg_ws_proxy_rs_conf_set CF_DOMAIN "$best"
