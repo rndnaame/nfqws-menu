@@ -130,7 +130,6 @@
       ],
       [
         "--hostlist-exclude=/opt/etc/nfqws2/lists/user.list",
-        "--hostlist-exclude=/opt/etc/nfqws2/lists/rkn.list",
         "--filter-tcp=80,443",
         "--ipset=/opt/etc/nfqws2/lists/ipset.list",
         "--hostlist-exclude=/opt/etc/nfqws2/lists/exclude.list",
@@ -316,7 +315,6 @@
       ],
       [
         "--hostlist-exclude=/opt/etc/nfqws2/lists/user.list",
-        "--hostlist-exclude=/opt/etc/nfqws2/lists/rkn.list",
         "--filter-tcp=80,443",
         "--ipset=/opt/etc/nfqws2/lists/ipset.list",
         "--hostlist-exclude=/opt/etc/nfqws2/lists/exclude.list",
@@ -507,7 +505,6 @@
       ],
       [
         "--hostlist-exclude=/opt/etc/nfqws2/lists/user.list",
-        "--hostlist-exclude=/opt/etc/nfqws2/lists/rkn.list",
         "--filter-tcp=80,443",
         "--ipset=/opt/etc/nfqws2/lists/ipset.list",
         "--hostlist-exclude=/opt/etc/nfqws2/lists/exclude.list",
@@ -698,7 +695,6 @@
       ],
       [
         "--hostlist-exclude=/opt/etc/nfqws2/lists/user.list",
-        "--hostlist-exclude=/opt/etc/nfqws2/lists/rkn.list",
         "--filter-tcp=80,443",
         "--ipset=/opt/etc/nfqws2/lists/ipset.list",
         "--hostlist-exclude=/opt/etc/nfqws2/lists/exclude.list",
@@ -888,7 +884,6 @@
       ],
       [
         "--hostlist-exclude=/opt/etc/nfqws2/lists/user.list",
-        "--hostlist-exclude=/opt/etc/nfqws2/lists/rkn.list",
         "--filter-tcp=80,443",
         "--ipset=/opt/etc/nfqws2/lists/ipset.list",
         "--hostlist-exclude=/opt/etc/nfqws2/lists/exclude.list",
@@ -1065,7 +1060,6 @@
       ],
       [
         "--hostlist-exclude=/opt/etc/nfqws2/lists/user.list",
-        "--hostlist-exclude=/opt/etc/nfqws2/lists/rkn.list",
         "--filter-tcp=80,443",
         "--ipset=/opt/etc/nfqws2/lists/ipset.list",
         "--hostlist-exclude=/opt/etc/nfqws2/lists/exclude.list",
@@ -1241,7 +1235,6 @@
       ],
       [
         "--hostlist-exclude=/opt/etc/nfqws2/lists/user.list",
-        "--hostlist-exclude=/opt/etc/nfqws2/lists/rkn.list",
         "--filter-tcp=80,443",
         "--ipset=/opt/etc/nfqws2/lists/ipset.list",
         "--hostlist-exclude=/opt/etc/nfqws2/lists/exclude.list",
@@ -1432,7 +1425,6 @@
       ],
       [
         "--hostlist-exclude=/opt/etc/nfqws2/lists/user.list",
-        "--hostlist-exclude=/opt/etc/nfqws2/lists/rkn.list",
         "--filter-tcp=80,443",
         "--ipset=/opt/etc/nfqws2/lists/ipset.list",
         "--hostlist-exclude=/opt/etc/nfqws2/lists/exclude.list",
@@ -1737,7 +1729,6 @@
       ],
       [
         "--hostlist-exclude=/opt/etc/nfqws2/lists/user.list",
-        "--hostlist-exclude=/opt/etc/nfqws2/lists/rkn.list",
         "--filter-tcp=80,443",
         "--ipset=/opt/etc/nfqws2/lists/ipset.list",
         "--hostlist-exclude=/opt/etc/nfqws2/lists/exclude.list",
@@ -1897,7 +1888,6 @@
       ],
       [
         "--hostlist-exclude=/opt/etc/nfqws2/lists/user.list",
-        "--hostlist-exclude=/opt/etc/nfqws2/lists/rkn.list",
         "--filter-tcp=80,443",
         "--ipset=/opt/etc/nfqws2/lists/ipset.list",
         "--hostlist-exclude=/opt/etc/nfqws2/lists/exclude.list",
@@ -2065,7 +2055,6 @@
       ],
       [
         "--hostlist-exclude=/opt/etc/nfqws2/lists/user.list",
-        "--hostlist-exclude=/opt/etc/nfqws2/lists/rkn.list",
         "--filter-tcp=80,443",
         "--ipset=/opt/etc/nfqws2/lists/ipset.list",
         "--hostlist-exclude=/opt/etc/nfqws2/lists/exclude.list",
@@ -2233,7 +2222,6 @@
       ],
       [
         "--hostlist-exclude=/opt/etc/nfqws2/lists/user.list",
-        "--hostlist-exclude=/opt/etc/nfqws2/lists/rkn.list",
         "--filter-tcp=80,443",
         "--ipset=/opt/etc/nfqws2/lists/ipset.list",
         "--hostlist-exclude=/opt/etc/nfqws2/lists/exclude.list",
@@ -2426,7 +2414,6 @@
       ],
       [
         "--hostlist-exclude=/opt/etc/nfqws2/lists/user.list",
-        "--hostlist-exclude=/opt/etc/nfqws2/lists/rkn.list",
         "--filter-tcp=80,443",
         "--ipset=/opt/etc/nfqws2/lists/ipset.list",
         "--hostlist-exclude=/opt/etc/nfqws2/lists/exclude.list",
@@ -2620,7 +2607,6 @@
       ],
       [
         "--hostlist-exclude=/opt/etc/nfqws2/lists/user.list",
-        "--hostlist-exclude=/opt/etc/nfqws2/lists/rkn.list",
         "--filter-tcp=80,443",
         "--ipset=/opt/etc/nfqws2/lists/ipset.list",
         "--hostlist-exclude=/opt/etc/nfqws2/lists/exclude.list",
@@ -2808,7 +2794,6 @@
       ],
       [
         "--hostlist-exclude=/opt/etc/nfqws2/lists/user.list",
-        "--hostlist-exclude=/opt/etc/nfqws2/lists/rkn.list",
         "--filter-tcp=80,443",
         "--ipset=/opt/etc/nfqws2/lists/ipset.list",
         "--hostlist-exclude=/opt/etc/nfqws2/lists/exclude.list",
@@ -2997,7 +2982,6 @@
       ],
       [
         "--hostlist-exclude=/opt/etc/nfqws2/lists/user.list",
-        "--hostlist-exclude=/opt/etc/nfqws2/lists/rkn.list",
         "--filter-tcp=80,443",
         "--ipset=/opt/etc/nfqws2/lists/ipset.list",
         "--hostlist-exclude=/opt/etc/nfqws2/lists/exclude.list",
@@ -3190,7 +3174,6 @@
       ],
       [
         "--hostlist-exclude=/opt/etc/nfqws2/lists/user.list",
-        "--hostlist-exclude=/opt/etc/nfqws2/lists/rkn.list",
         "--filter-tcp=80,443",
         "--ipset=/opt/etc/nfqws2/lists/ipset.list",
         "--hostlist-exclude=/opt/etc/nfqws2/lists/exclude.list",
@@ -3375,7 +3358,6 @@
       ],
       [
         "--hostlist-exclude=/opt/etc/nfqws2/lists/user.list",
-        "--hostlist-exclude=/opt/etc/nfqws2/lists/rkn.list",
         "--filter-tcp=80,443",
         "--ipset=/opt/etc/nfqws2/lists/ipset.list",
         "--hostlist-exclude=/opt/etc/nfqws2/lists/exclude.list",
@@ -3557,7 +3539,6 @@
       ],
       [
         "--hostlist-exclude=/opt/etc/nfqws2/lists/user.list",
-        "--hostlist-exclude=/opt/etc/nfqws2/lists/rkn.list",
         "--filter-tcp=80,443",
         "--ipset=/opt/etc/nfqws2/lists/ipset.list",
         "--hostlist-exclude=/opt/etc/nfqws2/lists/exclude.list",
@@ -3735,7 +3716,6 @@
       ],
       [
         "--hostlist-exclude=/opt/etc/nfqws2/lists/user.list",
-        "--hostlist-exclude=/opt/etc/nfqws2/lists/rkn.list",
         "--filter-tcp=80,443",
         "--ipset=/opt/etc/nfqws2/lists/ipset.list",
         "--hostlist-exclude=/opt/etc/nfqws2/lists/exclude.list",
@@ -3905,7 +3885,6 @@
       ],
       [
         "--hostlist-exclude=/opt/etc/nfqws2/lists/user.list",
-        "--hostlist-exclude=/opt/etc/nfqws2/lists/rkn.list",
         "--filter-tcp=80,443",
         "--ipset=/opt/etc/nfqws2/lists/ipset.list",
         "--hostlist-exclude=/opt/etc/nfqws2/lists/exclude.list",
