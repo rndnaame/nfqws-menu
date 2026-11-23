@@ -1,11 +1,6 @@
-### 0.11.14
+### 0.11.17
 
-- **rci79** — `installer_rci79.sh`, **S → 4**, CLI `menu rci79`; бинарники в `rci79/` (зеркало PCA/rci79 v1.0.0), fallback на upstream releases
-- **RCI 0.11.12–13** — без ложного Netfilter при 403; SCGI fallback
-
-### 0.11.13
-
-- **RCI 5.1.9**: при 403 на `:79` — fallback через SCGI `/var/run/ndm.scgi.socket` (как rci79/awg-manager); ложный `[!]` Netfilter только при реальном JSON без `opkg-kmod-netfilter`
+- **п.4 rkn / apply strategy** — `inject_rkn_into_mode_list`: помимо `--hostlist=rkn.list` в `MODE_LIST` добавляет `--hostlist-exclude=rkn.list` в IP-профили CUSTOM (перед `--ipset=…/ipset.list`); идемпотентно при повторном вызове и при восстановлении rkn после смены стратегии
 
 ### 0.11.03
 

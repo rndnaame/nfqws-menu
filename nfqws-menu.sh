@@ -10,7 +10,7 @@
 
 set -e
 
-SCRIPT_VERSION="0.11.16"
+SCRIPT_VERSION="0.11.17"
 
 RAW_BASE="https://raw.githubusercontent.com/rndnaame/nfqws-menu/main"
 STRATEGIES_API="https://api.github.com/repos/rndnaame/nfqws-menu/contents/strategies"
@@ -2617,7 +2617,7 @@ apply_strategy() {
   # Восстановить привязку rkn.list в MODE_LIST, если она была до смены стратегии
   if [ "$had_rkn" -eq 1 ]; then
     echo
-    info "=== Восстановление rkn.list в MODE_LIST ==="
+    info "=== Восстановление rkn.list (MODE_LIST + CUSTOM exclude) ==="
     # skip_backup=1 — бэкап уже сделан перед заменой конфига стратегией
     if inject_rkn_into_mode_list "$ver" "$conf_dest" 1; then
       rkn_path=$(rkn_list_path "$ver" 2>/dev/null || true)
@@ -2990,6 +2990,15 @@ rkn_hostlist_arg() {
   esac
 }
 
+# --hostlist-exclude=.../rkn.list для IP-профилей в CUSTOM
+rkn_hostlist_exclude_arg() {
+  case "$1" in
+    1) echo "--hostlist-exclude=/opt/etc/nfqws/rkn.list" ;;
+    2) echo "--hostlist-exclude=/opt/etc/nfqws2/lists/rkn.list" ;;
+    *) return 1 ;;
+  esac
+}
+
 # Путь к rkn.list для версии
 rkn_list_path() {
   case "$1" in
@@ -2999,7 +3008,7 @@ rkn_list_path() {
   esac
 }
 
-# Есть ли в конфиге привязка rkn.list (MODE_LIST / hostlist)
+# Есть ли в конфиге привязка rkn.list (MODE_LIST --hostlist)
 conf_has_rkn_hostlist() {
   local conf="$1" ver="$2" arg
   arg=$(rkn_hostlist_arg "$ver") || return 1
@@ -3012,35 +3021,35 @@ conf_has_rkn_hostlist() {
 # $1=ver  $2=conf (опционально; по умолчанию nfqws_conf_path)
 # $3=1 — не делать backup (уже сделан, напр. в apply_strategy)
 inject_rkn_into_mode_list() {
-  local ver="$1" conf="${2:-}" skip_backup="${3:-0}" hostlist_arg user_list tmp_conf
+  local ver="$1" conf="${2:-}" skip_backup="${3:-0}"
+  local hostlist_arg exclude_arg user_list tmp_conf
+  local mode_ok=0
+
   hostlist_arg=$(rkn_hostlist_arg "$ver") || return 1
+  exclude_arg=$(rkn_hostlist_exclude_arg "$ver") || return 1
   [ -z "$conf" ] && conf=$(nfqws_conf_path "$ver")
-  [ -f "$conf" ] || { warn "Конфиг не найден: $conf — MODE_LIST не обновлён."; return 1; }
+  [ -f "$conf" ] || { warn "Конфиг не найден: $conf — rkn не привязан."; return 1; }
 
   case "$ver" in
     1) user_list="/opt/etc/nfqws/user.list" ;;
     2) user_list="/opt/etc/nfqws2/lists/user.list" ;;
+    *) return 1 ;;
   esac
 
-  # уже есть
+  # --- 1) MODE_LIST: --hostlist=.../rkn.list ---
   if grep -qF -- "$hostlist_arg" "$conf" 2>/dev/null; then
     info "MODE_LIST уже содержит $hostlist_arg"
-    return 0
-  fi
-
-  if grep -qE '^[[:space:]]*MODE_LIST=' "$conf" 2>/dev/null; then
-    [ "$skip_backup" = "1" ] || backup_file "$conf"
-    # Вставляем --hostlist=...rkn.list перед закрывающей кавычкой.
-    # awk надёжнее busybox sed (пробелы, пустые кавычки, CRLF, single quotes).
+    mode_ok=1
+  elif grep -qE '^[[:space:]]*MODE_LIST=' "$conf" 2>/dev/null; then
+    [ "$skip_backup" = "1" ] || { backup_file "$conf"; skip_backup=1; }
     tmp_conf="/tmp/nfqws-mode-$$.conf"
     awk -v arg="$hostlist_arg" '
       BEGIN { done=0 }
       /^[[:space:]]*MODE_LIST=/ && !done {
         line=$0
         sub(/\r$/, "", line)
-        # MODE_LIST="content"  → MODE_LIST="content arg"  (или пустые кавычки)
         if (match(line, /^[[:space:]]*MODE_LIST="/)) {
-          prefix = substr(line, 1, RSTART+RLENGTH-1)  # включая открывающую "
+          prefix = substr(line, 1, RSTART+RLENGTH-1)
           rest = substr(line, RSTART+RLENGTH)
           if (match(rest, /"/)) {
             content = substr(rest, 1, RSTART-1)
@@ -3062,20 +3071,64 @@ inject_rkn_into_mode_list() {
     ' "$conf" > "$tmp_conf" && mv "$tmp_conf" "$conf"
     if grep -qF -- "$hostlist_arg" "$conf" 2>/dev/null; then
       info "В MODE_LIST добавлено: $hostlist_arg"
-      return 0
+      mode_ok=1
+    else
+      warn "Не удалось изменить MODE_LIST — добавьте вручную: $hostlist_arg"
+      rm -f "$tmp_conf"
     fi
-    warn "Не удалось изменить MODE_LIST автоматически — добавьте вручную:"
-    warn "  MODE_LIST=\"... $hostlist_arg\""
-    rm -f "$tmp_conf"
-    return 1
+  else
+    [ "$skip_backup" = "1" ] || { backup_file "$conf"; skip_backup=1; }
+    printf '\nMODE_LIST="--hostlist=%s %s"\n' "$user_list" "$hostlist_arg" >> "$conf"
+    info "Создан MODE_LIST с user.list и rkn.list"
+    mode_ok=1
   fi
 
-  # MODE_LIST отсутствует — создаём с user.list + rkn
-  [ "$skip_backup" = "1" ] || backup_file "$conf"
-  printf '\nMODE_LIST="--hostlist=%s %s"\n' "$user_list" "$hostlist_arg" >> "$conf"
-  info "MODE_LIST создан с user.list и rkn.list"
+  # --- 2) CUSTOM: --hostlist-exclude=.../rkn.list перед --ipset=.../ipset.list ---
+  # Один exclude на профиль (между --new). Идемпотентно.
+  tmp_conf="/tmp/nfqws-rkn-ex-$$.conf"
+  awk -v rkn_ex="$exclude_arg" '
+    BEGIN { profile_has_rkn=0 }
+    {
+      line=$0
+      sub(/\r$/, "", line)
+
+      if (line ~ /(^|[[:space:]])--new([[:space:]]|$)/ || line ~ /^[[:space:]]*NFQWS_ARGS_CUSTOM=/)
+        profile_has_rkn=0
+      if (index(line, rkn_ex) > 0)
+        profile_has_rkn=1
+
+      # перед --ipset=/path/ipset.list (не ipset-exclude)
+      if (line ~ /--ipset=\/[^[:space:]"]*\/ipset\.list/ || line ~ /--ipset=\/opt\/etc\/nfqws\/ipset\.list/) {
+        if (line !~ /ipset-exclude/ && line !~ /ipset_exclude/) {
+          if (!profile_has_rkn) {
+            indent=line
+            sub(/[^ \t].*/, "", indent)
+            print indent rkn_ex
+            profile_has_rkn=1
+          }
+        }
+      }
+      print line
+    }
+  ' "$conf" > "$tmp_conf"
+
+  if cmp -s "$conf" "$tmp_conf" 2>/dev/null; then
+    if grep -qF -- "$exclude_arg" "$conf" 2>/dev/null; then
+      info "CUSTOM уже содержит $exclude_arg"
+    else
+      info "CUSTOM: нет IP-профилей (--ipset=.../ipset.list) для exclude (пропуск)"
+    fi
+    rm -f "$tmp_conf"
+  else
+    [ "$skip_backup" = "1" ] || backup_file "$conf"
+    mv "$tmp_conf" "$conf"
+    info "В CUSTOM добавлен $exclude_arg (IP-профили)"
+  fi
+
+  [ "$mode_ok" -eq 1 ] || return 1
   return 0
 }
+
 
 update_rkn_list() {
   need_nfqws_installed || return
