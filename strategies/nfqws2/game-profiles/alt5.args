@@ -1,7 +1,6 @@
 --filter-tcp=1024-65535
 --ipset=/opt/etc/nfqws2/lists/ipset.list
 --ipset-exclude=/opt/etc/nfqws2/lists/ipset_exclude.list
---ipset-exclude=/opt/etc/nfqws2/lists/ipset_exclude-extra.list
 --out-range=<n4
 --payload=empty
 --lua-desync=syndata:repeats=1
@@ -11,7 +10,6 @@
 --filter-udp=1024-65535
 --ipset=/opt/etc/nfqws2/lists/ipset.list
 --ipset-exclude=/opt/etc/nfqws2/lists/ipset_exclude.list
---ipset-exclude=/opt/etc/nfqws2/lists/ipset_exclude-extra.list
 --out-range=<n3
 --payload=quic_initial
 --lua-desync=fake:blob=legacy_quic:repeats=14

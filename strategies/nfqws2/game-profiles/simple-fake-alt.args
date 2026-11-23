@@ -1,7 +1,6 @@
 --filter-tcp=1024-65535
 --ipset=/opt/etc/nfqws2/lists/ipset.list
 --ipset-exclude=/opt/etc/nfqws2/lists/ipset_exclude.list
---ipset-exclude=/opt/etc/nfqws2/lists/ipset_exclude-extra.list
 --out-range=<n3
 --payload=http_req
 --lua-desync=fake:blob=tls_clienthello_www_sferum_ru:repeats=6:tcp_seq=2:tcp_ack=-66000:tcp_ts_up
@@ -15,7 +14,6 @@
 --filter-udp=1024-65535
 --ipset=/opt/etc/nfqws2/lists/ipset.list
 --ipset-exclude=/opt/etc/nfqws2/lists/ipset_exclude.list
---ipset-exclude=/opt/etc/nfqws2/lists/ipset_exclude-extra.list
 --out-range=<n2
 --payload=quic_initial
 --lua-desync=fake:blob=legacy_quic:repeats=10
