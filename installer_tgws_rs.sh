@@ -12,8 +12,8 @@
 
 # Версия самого установщика (не бинаря tg-ws-proxy-rs). Меняйте при правках
 # этого файла — в логе сразу видно, свежий скрипт или кэш CDN/GitHub.
-INSTALLER_VERSION="1.4.3"
-INSTALLER_FEATURES="cf-first-probe,port-1443-5443-8443,gh-mirror,no-backup,probe-fast,auto-remove-on-fail"
+INSTALLER_VERSION="1.4.4"
+INSTALLER_FEATURES="cf-first-probe,port-1443-5443-8443,gh-mirror,no-backup,probe-fast,cf-disable-tls-first,auto-remove-on-fail"
 
 # ANSI (portable для ash/BusyBox)
 if [ -t 1 ]; then
@@ -506,9 +506,10 @@ tg_ws_proxy_rs_install() {
   # оно печатает само и только после проверки связи, а «Rollback backup»
   # дублирует «Backup» тем же путём.
   esc=$(printf '\033')
+  # Backup/Rollback — upstream install.sh; мы бэкапы сразу сносим, строку не показываем
   printf '%s\n' "$out" \
     | sed "s/${esc}\[[0-9;]*m//g" \
-    | grep -v -e '^Proxy link:' -e '^Rollback backup:' \
+    | grep -v -e '^Proxy link:' -e '^Rollback backup:' -e '^Backup:' \
     | sed 's/^/    /'
   if [ "$rc" -ne 0 ]; then
     error "install.sh завершился с ошибкой (попыток: $tried)."
@@ -591,10 +592,14 @@ tg_ws_proxy_rs_probe() {
     return 1
   }
 
-  # --default-domains в каждом прогоне снова гоняет весь список CF (десятки
-  # секунд при блокировке). Домены уже замерили отдельно → в пробе оставляем
-  # только CF_DOMAIN из конфига; --default-domains убираем из args.
-  probe_args=$(printf '%s' "${EXTRA_ARGS:-}" | sed 's/--default-domains//g' | tr -s ' ')
+  # Если CF_DOMAIN уже выставлен замером — не гоняем --default-domains снова
+  # (долго при мёртвых доменах). Если замер пустой — --default-domains ОБЯЗАТЕЛЕН:
+  # иначе cfproxy/cfworker вообще без origin (типичный полный FAIL после «ускорения»).
+  probe_args="${EXTRA_ARGS:-}"
+  conf_cf=$(tg_ws_proxy_rs_conf_get CF_DOMAIN 2>/dev/null || true)
+  if [ -n "$conf_cf" ]; then
+    probe_args=$(printf '%s' "$probe_args" | sed 's/--default-domains//g' | tr -s ' ')
+  fi
 
   out=$(
     scrub_and_source() {
@@ -612,8 +617,9 @@ tg_ws_proxy_rs_probe() {
     [ -n "$MTPROTO_PROXY" ] && export TG_MTPROTO_PROXY="$MTPROTO_PROXY"
 
     # агрессивные таймауты только для пробы (сервисный конфиг не трогаем)
+    # cf-disable-tls (ws://:80) часто медленнее — чуть мягче CF timeout
     export TG_WS_CONNECT_TIMEOUT=2
-    export TG_CF_CONNECT_TIMEOUT=2
+    export TG_CF_CONNECT_TIMEOUT=3
     export TG_UPSTREAM_CONNECT_TIMEOUT=2
     export TG_HANDSHAKE_TIMEOUT=3
     export TG_WS_FAIL_PROBE_TIMEOUT=2
@@ -621,7 +627,7 @@ tg_ws_proxy_rs_probe() {
 
     # shellcheck disable=SC2086
     if command -v timeout >/dev/null 2>&1; then
-      timeout 25 "$TG_WS_PROXY_RS_BIN" --port "$port" --check-listener $probe_args 2>&1
+      timeout 30 "$TG_WS_PROXY_RS_BIN" --port "$port" --check-listener $probe_args 2>&1
     else
       "$TG_WS_PROXY_RS_BIN" --port "$port" --check-listener $probe_args 2>&1
     fi
@@ -637,26 +643,29 @@ tg_ws_proxy_rs_probe() {
 }
 
 # Варианты лестницы: индекс → DC_IP | EXTRA_ARGS | описание.
-# Порядок перебора: сначала CF-first (не начинать с ws — долгий таймаут
-# → клиент Telegram помечает прокси «неверным»). --default-domains нужен
-# для cfproxy/cfworker без своего домена. Индекс 5 — запасной TLS-MITM.
+# С 21.11.2026 у многих провайдеров помогает --cf-disable-tls (см.
+# Flowseal#1679, valnesfjord#183) — CF TLS режут, plaintext ws://:80 проходит.
+# Поэтому TLS-MITM ставим первым, не «запасным».
 tg_ws_proxy_rs_variant() {
   case "$1" in
     1) printf '%s|%s|%s\n' "$TG_WS_PROXY_RS_DC_TARGETS" \
-         "--default-domains --pinned-upstream cfworker,cfproxy,ws,tcp" \
-         "CF-first: cfworker → cfproxy → ws (рекомендуется)" ;;
+         "--default-domains --cf-disable-tls --pinned-upstream cfproxy,cfworker,ws" \
+         "cfproxy ws://:80 (без TLS CF) — часто единственный рабочий" ;;
     2) printf '%s|%s|%s\n' "$TG_WS_PROXY_RS_DC_TARGETS" \
-         "--default-domains --pinned-upstream cfproxy,ws,tcp" \
-         "cfproxy → ws → tcp" ;;
+         "--default-domains --cf-disable-tls --pinned-upstream cfworker,cfproxy,ws" \
+         "cfworker→cfproxy по ws://:80 (без TLS CF)" ;;
     3) printf '%s|%s|%s\n' "$TG_WS_PROXY_RS_DC_TARGETS" \
+         "--default-domains --pinned-upstream cfworker,cfproxy,ws,tcp" \
+         "CF-first TLS: cfworker → cfproxy → ws" ;;
+    4) printf '%s|%s|%s\n' "$TG_WS_PROXY_RS_DC_TARGETS" \
+         "--default-domains --pinned-upstream cfproxy,ws,tcp" \
+         "cfproxy → ws → tcp (TLS)" ;;
+    5) printf '%s|%s|%s\n' "$TG_WS_PROXY_RS_DC_TARGETS" \
          "--default-domains --pinned-upstream ws,cfproxy,tcp" \
          "прямой WebSocket (ws → cfproxy → tcp)" ;;
-    4) printf '%s|%s|%s\n' "$TG_WS_PROXY_RS_DC_TARGETS" \
+    6) printf '%s|%s|%s\n' "$TG_WS_PROXY_RS_DC_TARGETS" \
          "--default-domains --pinned-upstream ws,cfproxy,tcp --fronting-domain $TG_WS_PROXY_RS_FRONTING_DOMAIN" \
          "прямой WebSocket с фронтингом SNI" ;;
-    5) printf '%s|%s|%s\n' "$TG_WS_PROXY_RS_DC_TARGETS" \
-         "--default-domains --cf-disable-tls --pinned-upstream cfproxy,ws" \
-         "cfproxy по ws://:80 (TLS-MITM / CF TLS режется)" ;;
     *) return 1 ;;
   esac
 }
@@ -666,9 +675,9 @@ tg_ws_proxy_rs_variant() {
 # Сервис не перезапускается: проба поднимает собственный слушатель и читает
 # конфиг с диска.
 tg_ws_proxy_rs_probe_variants() {
-  local i row dc args label ms total=5
+  local i row dc args label ms total=6
   TG_WS_PROXY_RS_RESULTS=""
-  info "Проверяю варианты (до ~25 с на каждый, всего $total)…"
+  info "Проверяю варианты (до ~30 с на каждый, всего $total; сначала без TLS CF)…"
   i=1
   while :; do
     row=$(tg_ws_proxy_rs_variant "$i") || break
@@ -694,44 +703,24 @@ tg_ws_proxy_rs_probe_variants() {
   return 0
 }
 
-# Печатает список проверенных путей: обычные — с временем и пометкой быстрейшего,
-# запасной TLS-MITM (индекс 5) — отдельной строкой. Если обычные все FAIL, а
-# fallback OK — он становится «быстрейшим» (раньше BEST был пуст и скрипт
-# писал «ни один путь не ответил» при живом [5]).
+# Печатает список проверенных путей с пометкой быстрейшего OK.
 tg_ws_proxy_rs_show_variants() {
-  local rows normal fallback
+  local rows
   rows=$(printf '%s' "$TG_WS_PROXY_RS_RESULTS" | grep -v '^$')
   [ -n "$rows" ] || return 1
-  normal=$(printf '%s\n' "$rows" | awk -F'|' '$1 != 5')
-  fallback=$(printf '%s\n' "$rows" | awk -F'|' '$1 == 5')
 
-  TG_WS_PROXY_RS_BEST_IDX=$(printf '%s\n' "$normal" \
+  TG_WS_PROXY_RS_BEST_IDX=$(printf '%s\n' "$rows" \
     | awk -F'|' '$3 == "OK" { print $2 " " $1 }' \
     | sort -n | awk 'NR == 1 { print $2 }')
-  # если обычные мертвы — взять fallback, если он OK
-  if [ -z "$TG_WS_PROXY_RS_BEST_IDX" ] && [ -n "$fallback" ]; then
-    TG_WS_PROXY_RS_BEST_IDX=$(printf '%s\n' "$fallback" \
-      | awk -F'|' '$3 == "OK" { print $1; exit }')
-  fi
 
   echo
   printf '%s\n' "${BOLD}Проверенные пути:${NC}"
-  printf '%s\n' "$normal" | awk -F'|' -v best="$TG_WS_PROXY_RS_BEST_IDX" '
+  printf '%s\n' "$rows" | awk -F'|' -v best="$TG_WS_PROXY_RS_BEST_IDX" '
     {
       mark = ($1 == best) ? "   <- быстрейший" : ""
       if ($3 == "OK") printf "  [%d] OK   %5sms  %s%s\n", $1, $2, $4, mark
       else            printf "  [%d] FAIL         %s\n", $1, $4
     }'
-  if [ -n "$fallback" ]; then
-    echo
-    printf '%s\n' "  запасной режим (TLS-MITM, метаданные идут открыто):"
-    printf '%s\n' "$fallback" | awk -F'|' -v best="$TG_WS_PROXY_RS_BEST_IDX" '
-      {
-        mark = ($1 == best) ? "   <- быстрейший" : ""
-        if ($3 == "OK") printf "  [%d] OK   %5sms  %s%s\n", $1, $2, $4, mark
-        else            printf "  [%d] FAIL         %s\n", $1, $4
-      }'
-  fi
   return 0
 }
 
