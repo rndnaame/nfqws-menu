@@ -1,8 +1,7 @@
 #!/bin/sh
 # installer_warpscout.sh — меню warpscout для Entware (Keenetic / Netcraze)
-# Бинарники: https://github.com/rndnaame/warpscout (mipsel + arm)
-# Upstream:   https://github.com/vernette/warpscout (arm fallback)
-# Обёртка:    https://github.com/rndnaame/nfqws-menu
+# Бинарники: https://github.com/vernette/warpscout (arm64, mips, mipsle, …)
+# Обёртка:   https://github.com/rndnaame/nfqws-menu
 #
 # Версионирование (MAJOR.MINOR.PATCH): при любых правках бампать SCRIPT_VERSION.
 #   PATCH — мелкие фиксы; MINOR — новое поведение; MAJOR — ломающие изменения.
@@ -19,7 +18,7 @@
 #   sh installer_warpscout.sh
 #   curl -fsSL https://raw.githubusercontent.com/rndnaame/nfqws-menu/main/installer_warpscout.sh | sh
 
-SCRIPT_VERSION="0.3.2"
+SCRIPT_VERSION="0.3.3"
 
 # ANSI (portable для ash/BusyBox)
 RED=$(printf '\033[0;31m')
@@ -66,11 +65,10 @@ SCAN_OUT="/opt/root/warpscout-awg.list"
 CONF_OUT="/opt/root/warpscout-awg.conf"
 JUNK_FILE="/opt/root/warpscout-junk.env"
 FIND_JUNK_LOG="/opt/root/warpscout-find-junk.log"
-# rndnaame — сборки mipsel + arm; vernette — официальный upstream (arm)
-GITHUB_REPO="rndnaame/warpscout"
-OFFICIAL_REPO="vernette/warpscout"
+# Официальные релизы (arm64 / mips / mipsle softfloat и др.)
+GITHUB_REPO="vernette/warpscout"
 # fallback, если GitHub API недоступен
-PIN_VERSION="0.16.1"
+PIN_VERSION="0.17.0"
 WS_VERSION=""
 WS_VERSION_SOURCE=""
 AWG_SETTINGS="/opt/etc/awg-manager/settings.json"
@@ -300,7 +298,7 @@ _fetch_tag_name() {
   printf '%s' "$body" | tr ',' '\n' | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1
 }
 
-# WS_VERSION / WS_VERSION_SOURCE: api → pin 0.16.1
+# WS_VERSION / WS_VERSION_SOURCE: api vernette → pin
 resolve_release_version() {
   WS_VERSION=""
   WS_VERSION_SOURCE=""
@@ -564,21 +562,16 @@ do_install() {
       url=$(release_asset_url "$GITHUB_REPO" "$WS_VERSION" "linux_arm64")
       if install_from_tarball "$url" "${GITHUB_REPO} · linux_arm64"; then
         src="$INSTALL_SRC"
-      else
-        url=$(release_asset_url "$OFFICIAL_REPO" "$WS_VERSION" "linux_arm64")
-        warn "Fallback upstream ${OFFICIAL_REPO}..."
-        if install_from_tarball "$url" "${OFFICIAL_REPO} · linux_arm64"; then
+      elif [ "$WS_VERSION" != "$PIN_VERSION" ]; then
+        url=$(release_asset_url "$GITHUB_REPO" "$PIN_VERSION" "linux_arm64")
+        if install_from_tarball "$url" "${GITHUB_REPO} · pin v${PIN_VERSION}"; then
           src="$INSTALL_SRC"
-        elif [ "$WS_VERSION" != "$PIN_VERSION" ]; then
-          url=$(release_asset_url "$OFFICIAL_REPO" "$PIN_VERSION" "linux_arm64")
-          if install_from_tarball "$url" "${OFFICIAL_REPO} · pin v${PIN_VERSION}"; then
-            src="$INSTALL_SRC"
-          fi
         fi
       fi
       ;;
     mipsel)
       info "Архитектура: mipsel"
+      # upstream: linux_mipsle (GOMIPS softfloat в релизе vernette)
       url=$(release_asset_url "$GITHUB_REPO" "$WS_VERSION" "linux_mipsle")
       if install_from_tarball "$url" "${GITHUB_REPO} · linux_mipsle"; then
         src="$INSTALL_SRC"
@@ -3610,8 +3603,7 @@ main_menu() {
     printf '%s\n' "${CYAN}================================================${NC}"
     echo
     printf '%s\n' "  ${BOLD}Поиск рабочих эндпоинтов Cloudflare WARP${NC}"
-    printf '%s\n' "  ${DIM}репозиторий  github.com/${GITHUB_REPO}${NC}"
-    printf '%s\n' "  ${DIM}upstream     github.com/${OFFICIAL_REPO}${NC}"
+    printf '%s\n' "  ${DIM}релизы       github.com/${GITHUB_REPO}${NC}"
     printf '%s\n' "  ${DIM}pin / bin    v${PIN_VERSION}  →  ${BIN}${NC}"
     echo
     show_status
