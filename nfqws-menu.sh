@@ -10,7 +10,7 @@
 
 set -e
 
-SCRIPT_VERSION="0.11.17"
+SCRIPT_VERSION="0.11.18"
 
 RAW_BASE="https://raw.githubusercontent.com/rndnaame/nfqws-menu/main"
 STRATEGIES_API="https://api.github.com/repos/rndnaame/nfqws-menu/contents/strategies"
@@ -5056,6 +5056,54 @@ _opkg_quiet() {
   return "$rc"
 }
 
+# opkg upgrade с отчётом: какие пакеты обновились (без простыни Downloading).
+# Печатает строки «  name  old → new»; код возврата — как у opkg.
+_opkg_upgrade_report() {
+  local log="/tmp/nfqws-opkg-upg.$$.log" rc=0 n=0 line pkg old new
+  opkg upgrade >"$log" 2>&1
+  rc=$?
+
+  if [ "$rc" -ne 0 ]; then
+    warn "opkg upgrade failed ($rc)"
+    tail -30 "$log" 2>/dev/null || true
+    rm -f "$log"
+    return "$rc"
+  fi
+
+  # Типичная строка Entware/OpenWrt:
+  #   Upgrading curl on root from 8.5.0-1 to 8.11.0-1...
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      Upgrading\ *)
+        pkg=$(printf '%s\n' "$line" | awk '{print $2}')
+        old=$(printf '%s\n' "$line" | sed -n 's/.* from \([^ ]*\) to .*/\1/p')
+        new=$(printf '%s\n' "$line" | sed -n 's/.* to \([^ ]*\).*/\1/p' | sed 's/\.\.\.$//')
+        if [ -n "$pkg" ]; then
+          if [ -n "$old" ] && [ -n "$new" ]; then
+            printf '      %s  %s → %s\n' "$pkg" "$old" "$new"
+          else
+            printf '      %s\n' "$pkg"
+          fi
+          n=$((n + 1))
+        fi
+        ;;
+      Installing\ *)
+        # новая зависимость при upgrade
+        pkg=$(printf '%s\n' "$line" | awk '{print $2}')
+        [ -n "$pkg" ] && printf '      %s  (install)\n' "$pkg" && n=$((n + 1))
+        ;;
+    esac
+  done < "$log"
+
+  if [ "$n" -eq 0 ]; then
+    info "    пакеты не менялись (уже актуальны)"
+  else
+    info "    обновлено пакетов: $n"
+  fi
+  rm -f "$log"
+  return 0
+}
+
 
 
 remove_awg_manager() {
@@ -5751,11 +5799,10 @@ opkg_upgrade_all() {
     error "Повторный opkg update не удался."
     return 1
   fi
-  if ! _opkg_quiet opkg upgrade; then
+  if ! _opkg_upgrade_report; then
     error "opkg upgrade не удался."
     return 1
   fi
-  info "    ok"
   refresh_opkg_cache
 
   if [ -x /opt/bin/dpi-detector ]; then

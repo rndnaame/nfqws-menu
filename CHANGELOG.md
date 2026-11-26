@@ -1,3 +1,7 @@
+### 0.11.18
+
+- **U / opkg upgrade**: отчёт по обновлённым пакетам (`name  old → new`), без простыни Downloading
+
 ### 0.11.17
 
 - **п.4 rkn / apply strategy** — `inject_rkn_into_mode_list`: помимо `--hostlist=rkn.list` в `MODE_LIST` добавляет `--hostlist-exclude=rkn.list` в IP-профили CUSTOM (перед `--ipset=…/ipset.list`); идемпотентно при повторном вызове и при восстановлении rkn после смены стратегии
