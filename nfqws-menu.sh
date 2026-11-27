@@ -10,7 +10,7 @@
 
 set -e
 
-SCRIPT_VERSION="0.11.18"
+SCRIPT_VERSION="0.11.19"
 
 RAW_BASE="https://raw.githubusercontent.com/rndnaame/nfqws-menu/main"
 STRATEGIES_API="https://api.github.com/repos/rndnaame/nfqws-menu/contents/strategies"
@@ -4891,17 +4891,25 @@ is_awg_manager_installed() {
   is_installed "awg-manager" || [ -d /opt/etc/awg-manager ]
 }
 
-# UPX-сборка awg-manager: бинарник ≪ 10M (официальный ~26M). Логика как в awg-compressed.
+# UPX/сжатая сборка awg-manager: размер заметно меньше «толстой» (~13–26M).
+# На mipsel UPX бывает ~8–11M — порог 10M ошибочно считал 10.6M «не UPX» и
+# пропускал шаг 4/6 в menu U. Порог 14M: ниже типичной full-сборки.
+# (awg-compressed build_kind_label по-прежнему может писать просто «10.6M».)
+AWG_UPX_SIZE_MAX=14680064
+
 is_awg_manager_upx() {
   local bin b
   is_awg_manager_installed || return 1
-  for bin in /opt/sbin/awg-manager /opt/bin/awg-manager; do
-    [ -x "$bin" ] || continue
-    b=$(wc -c < "$bin" 2>/dev/null | tr -d ' 	
-
-')
+  for bin in \
+    /opt/sbin/awg-manager \
+    /opt/bin/awg-manager \
+    /opt/etc/awg-manager/awg-manager
+  do
+    [ -f "$bin" ] || continue
+    b=$(wc -c < "$bin" 2>/dev/null | tr -d ' \t\n')
     case "$b" in ''|*[!0-9]*) continue ;; esac
-    [ "$b" -gt 100000 ] && [ "$b" -lt 10485760 ] && return 0
+    # валидный ELF/бинарь и меньше порога full
+    [ "$b" -gt 100000 ] && [ "$b" -lt "$AWG_UPX_SIZE_MAX" ] && return 0
   done
   return 1
 }
@@ -5772,26 +5780,36 @@ opkg_upgrade_all() {
     info "3/6  AdGuard Home — нет"
   fi
 
-  if is_awg_manager_upx; then
+  if is_awg_manager_installed; then
     awg_ver=$(pkg_version "awg-manager" 2>/dev/null || echo "?")
-    if awg_upx_auto_needed; then
-      if has_awg_singbox; then
-        _sbv=$(singbox_local_version 2>/dev/null || echo "?")
-        info "4/6  awg-manager UPX $awg_ver + SB/awgm-box ${_sbv} → проверка/обновление ..."
+    if is_awg_manager_upx; then
+      if awg_upx_auto_needed; then
+        if has_awg_singbox; then
+          _sbv=$(singbox_local_version 2>/dev/null || echo "?")
+          info "4/6  awg-manager UPX $awg_ver + SB/awgm-box ${_sbv} → проверка/обновление ..."
+        else
+          info "4/6  awg-manager UPX $awg_ver → обновление ..."
+        fi
+        if update_awg_manager_upx_auto; then
+          info "    ok"
+        else
+          warn "    авто-обновление не удалось"
+        fi
       else
-        info "4/6  awg-manager UPX $awg_ver → обновление ..."
+        info "4/6  awg-manager UPX $awg_ver — актуален"
       fi
-      if update_awg_manager_upx_auto; then
-        info "    ok"
-      else
-        warn "    авто-обновление не удалось"
-      fi
+      opkg flag hold awg-manager >/dev/null 2>&1 || true
     else
-      info "4/6  awg-manager UPX $awg_ver — актуален"
+      # full/opkg-сборка — обновление через шаг 5 (opkg upgrade)
+      if awg_manager_upx_needs_update; then
+        _rem=$(upd_release_tag "hoaxisr/awg-manager" 2>/dev/null || echo "?")
+        info "4/6  awg-manager $awg_ver (full) — на GitHub ${_rem}; обновится через opkg (5/6) или п.11"
+      else
+        info "4/6  awg-manager $awg_ver (full) — актуален / opkg"
+      fi
     fi
-    opkg flag hold awg-manager >/dev/null 2>&1 || true
   else
-    info "4/6  awg-manager UPX — нет"
+    info "4/6  awg-manager — нет"
   fi
 
   info "5/6  opkg upgrade ..."
